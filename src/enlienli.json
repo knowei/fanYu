@@ -1,0 +1,18 @@
+{
+  "id": "enlienli",
+  "baseUrl": "https://enlienli.link",
+  "search": {
+    "url": "/vod/search.html?wd={name}",
+    "resultSelector": "a.module-card-item-poster[href*='/vod/detail/id/']"
+  },
+  "episodes": {
+    "selector": "a.module-play-list-link[href*='/vod/play/']",
+    "sourceRegex": "/sid/(\\d+)/",
+    "episodeRegex": "/nid/(\\d+)\\.html"
+  },
+  "video": {
+    "variable": "player_aaaa",
+    "urlField": "url",
+    "encryptField": "encrypt"
+  }
+}
