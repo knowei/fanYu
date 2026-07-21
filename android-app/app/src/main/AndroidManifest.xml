@@ -4,11 +4,16 @@
 
     <application
         android:allowBackup="true"
-        android:label="番剧解析测试"
+        android:label="番屿"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
+        <activity android:name=".MainActivity"
+            android:theme="@style/TransparentResolverTheme" />
+        <activity android:name=".DetailActivity" />
+        <activity android:name=".PlayerActivity"
+            android:configChanges="orientation|screenSize" />
         <activity
-            android:name=".MainActivity"
+            android:name=".HomeActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

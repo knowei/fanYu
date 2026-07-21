@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -44,6 +45,8 @@ import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -89,6 +92,7 @@ public class MainActivity extends Activity {
     private EditText episodeInput;
     private Button resolveButton;
     private Button copyButton;
+    private Button favoriteButton;
     private TextView statusView;
     private TextView resultView;
     private FrameLayout root;
@@ -101,14 +105,38 @@ public class MainActivity extends Activity {
     private String detailUrl;
     private String episodeUrl;
     private String resolvedSource = "omofun111";
+    private volatile boolean collectingSources;
+    private String subjectCover = "";
     private int probeGeneration;
     private int navigationGeneration;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        boolean returnToPlayer = getIntent().getBooleanExtra("return_to_player", false);
         super.onCreate(savedInstanceState);
+        if (returnToPlayer) {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+            getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            getWindow().getDecorView().setAlpha(0f);
+        }
         buildUi();
         configureWebView();
+        String incomingName = getIntent().getStringExtra("subject_name");
+        if (incomingName != null && !incomingName.isBlank()) {
+            nameInput.setText(incomingName);
+            requestedName = incomingName;
+        }
+        subjectCover = getIntent().getStringExtra("subject_cover");
+        if (subjectCover == null) subjectCover = "";
+        favoriteButton.setVisibility(incomingName == null || incomingName.isBlank()
+                ? View.GONE : View.VISIBLE);
+        int incomingEpisode = getIntent().getIntExtra("episode", 1);
+        episodeInput.setText(String.valueOf(Math.max(1, incomingEpisode)));
+        if (getIntent().getBooleanExtra("auto_resolve", false)) {
+            if (!returnToPlayer) showAutoResolveOverlay();
+            handler.postDelayed(this::startResolve, 300);
+        }
     }
 
     private int dp(int value) {
@@ -184,6 +212,15 @@ public class MainActivity extends Activity {
         copyParams.topMargin = dp(12);
         content.addView(copyButton, copyParams);
 
+        favoriteButton = new Button(this);
+        favoriteButton.setText("收藏这部番剧");
+        favoriteButton.setVisibility(View.GONE);
+        favoriteButton.setOnClickListener(view -> toggleFavorite());
+        LinearLayout.LayoutParams favoriteParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        favoriteParams.topMargin = dp(10);
+        content.addView(favoriteButton, favoriteParams);
+
         scrollView.addView(content);
         root.addView(scrollView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -245,6 +282,29 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void showAutoResolveOverlay() {
+        LinearLayout loading = new LinearLayout(this);
+        loading.setOrientation(LinearLayout.VERTICAL);
+        loading.setGravity(Gravity.CENTER);
+        loading.setBackgroundColor(Color.WHITE);
+        loading.setPadding(dp(36), dp(36), dp(36), dp(36));
+        android.widget.ProgressBar progress = new android.widget.ProgressBar(this);
+        loading.addView(progress, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        TextView title = text("正在寻找最快线路…", 20);
+        title.setGravity(Gravity.CENTER);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
+        titleParams.topMargin = dp(18);
+        loading.addView(title, titleParams);
+        TextView hint = text("解析成功后会自动进入播放页", 14);
+        hint.setGravity(Gravity.CENTER);
+        loading.addView(hint, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        root.addView(loading, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
     private void startResolve() {
         requestedName = nameInput.getText().toString().trim();
         String episodeText = episodeInput.getText().toString().trim();
@@ -284,20 +344,38 @@ public class MainActivity extends Activity {
                 List<SourceConfig> sources = parseSourceConfigs(subscription.html);
                 if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
 
-                List<Callable<ResolveResult>> tasks = new ArrayList<>();
+                CompletionService<ResolveResult> completion =
+                        new ExecutorCompletionService<>(networkExecutor);
                 for (SourceConfig source : sources) {
-                    tasks.add(() -> resolveSource(source, generation));
+                    completion.submit(() -> resolveSource(source, generation));
                 }
-
-                ResolveResult winner = networkExecutor.invokeAny(tasks, 45, TimeUnit.SECONDS);
-                runOnUiThread(() -> {
-                    if (generation != probeGeneration) return;
-                    resolvedSource = winner.source;
-                    detailUrl = winner.detailUrl;
-                    episodeUrl = winner.episodeUrl;
-                    stage = Stage.PLAY;
-                    deliverVideo(winner.videoUrl);
-                });
+                collectingSources = true;
+                boolean delivered = false;
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+                for (int completed = 0; completed < sources.size(); completed++) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) break;
+                    java.util.concurrent.Future<ResolveResult> future =
+                            completion.poll(remaining, TimeUnit.NANOSECONDS);
+                    if (future == null) break;
+                    try {
+                        ResolveResult result = future.get();
+                        if (!delivered) {
+                            delivered = true;
+                            runOnUiThread(() -> {
+                                resolvedSource = result.source;
+                                detailUrl = result.detailUrl;
+                                episodeUrl = result.episodeUrl;
+                                stage = Stage.PLAY;
+                                deliverVideo(result.videoUrl);
+                            });
+                        }
+                        broadcastSource(result);
+                    } catch (Exception ignored) {
+                    }
+                }
+                collectingSources = false;
+                if (!delivered) throw new IOException("没有可用的视频源");
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     if (generation != probeGeneration) return;
@@ -837,12 +915,17 @@ public class MainActivity extends Activity {
     private void deliverVideo(String videoUrl) {
         if (stage == Stage.DONE) return;
         stage = Stage.DONE;
-        probeGeneration++;
         hideVerification();
         resolveButton.setEnabled(true);
         copyButton.setTag(videoUrl);
         copyButton.setVisibility(View.VISIBLE);
         setStatus("解析成功");
+        getSharedPreferences("watching", MODE_PRIVATE).edit()
+                .putString("name", requestedName)
+                .putString("cover", subjectCover)
+                .putInt("episode", requestedEpisode)
+                .putString("videoUrl", videoUrl)
+                .apply();
 
         try {
             JSONObject output = new JSONObject();
@@ -858,6 +941,31 @@ public class MainActivity extends Activity {
         } catch (JSONException exception) {
             resultView.setText(videoUrl);
         }
+        if (getIntent().getBooleanExtra("return_to_player", false)) {
+            finish();
+            return;
+        }
+        Intent playerIntent = new Intent(this, PlayerActivity.class);
+        playerIntent.putExtra("video_url", videoUrl);
+        playerIntent.putExtra("subject_name", requestedName);
+        playerIntent.putExtra("subject_cover", subjectCover);
+        playerIntent.putExtra("episode", requestedEpisode);
+        playerIntent.putExtra("bangumi_id", getIntent().getIntExtra("bangumi_id", 0));
+        playerIntent.putExtra("available_episodes",
+                getIntent().getIntExtra("available_episodes", 12));
+        playerIntent.putExtra("source_name", resolvedSource);
+        startActivity(playerIntent);
+        finish();
+    }
+
+    private void broadcastSource(ResolveResult result) {
+        PlayerActivity.cacheResolvedSource(requestedEpisode, result.source, result.videoUrl);
+        Intent update = new Intent(PlayerActivity.ACTION_SOURCE_RESULT);
+        update.setPackage(getPackageName());
+        update.putExtra("episode", requestedEpisode);
+        update.putExtra("source_name", result.source);
+        update.putExtra("video_url", result.videoUrl);
+        sendBroadcast(update);
     }
 
     private void loadStageUrl(String url) {
@@ -925,6 +1033,38 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show();
     }
 
+    private void toggleFavorite() {
+        String name = nameInput.getText().toString().trim();
+        if (name.isEmpty()) return;
+        android.content.SharedPreferences preferences =
+                getSharedPreferences("watching", MODE_PRIVATE);
+        try {
+            org.json.JSONArray old = new org.json.JSONArray(
+                    preferences.getString("favorites", "[]"));
+            org.json.JSONArray updated = new org.json.JSONArray();
+            boolean removed = false;
+            for (int index = 0; index < old.length(); index++) {
+                JSONObject item = old.optJSONObject(index);
+                if (item != null && name.equals(item.optString("name"))) {
+                    removed = true;
+                } else if (item != null) {
+                    updated.put(item);
+                }
+            }
+            if (!removed) {
+                JSONObject item = new JSONObject();
+                item.put("name", name);
+                item.put("cover", subjectCover);
+                updated.put(item);
+            }
+            preferences.edit().putString("favorites", updated.toString()).apply();
+            favoriteButton.setText(removed ? "收藏这部番剧" : "已收藏，点击取消");
+            Toast.makeText(this, removed ? "已取消收藏" : "已加入收藏", Toast.LENGTH_SHORT).show();
+        } catch (JSONException exception) {
+            Toast.makeText(this, "收藏失败", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void setStatus(String message) {
         statusView.setText(message);
     }
@@ -949,7 +1089,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         probeGeneration++;
         handler.removeCallbacksAndMessages(null);
-        networkExecutor.shutdownNow();
+        if (!collectingSources) networkExecutor.shutdownNow();
         httpClient.dispatcher().cancelAll();
         if (webView != null) {
             webView.stopLoading();

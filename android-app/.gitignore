@@ -1,0 +1,8 @@
+# Android build artifacts
+.gradle/
+build/
+app/build/
+
+# Local release signing material — back up securely, never commit.
+keystore.properties
+fanyu-release.jks
