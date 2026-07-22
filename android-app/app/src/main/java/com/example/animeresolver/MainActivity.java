@@ -344,22 +344,54 @@ public class MainActivity extends Activity {
                 List<SourceConfig> sources = parseSourceConfigs(subscription.html);
                 if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
 
-                CompletionService<ResolveResult> completion =
+                java.util.LinkedHashMap<String, String> sourceSearchUrls =
+                        new java.util.LinkedHashMap<>();
+                for (SourceConfig source : sources) {
+                    sourceSearchUrls.put(source.name, source.searchUrl.replace(
+                            "{keyword}", Uri.encode(requestedName)));
+                }
+                PlayerActivity.beginSourceResolution(requestedEpisode, sourceSearchUrls);
+                for (java.util.Map.Entry<String, String> source : sourceSearchUrls.entrySet()) {
+                    broadcastSourceState(source.getKey(), PlayerActivity.SOURCE_LOADING,
+                            "", "", source.getValue());
+                }
+
+                CompletionService<SourceAttempt> completion =
                         new ExecutorCompletionService<>(networkExecutor);
                 for (SourceConfig source : sources) {
-                    completion.submit(() -> resolveSource(source, generation));
+                    completion.submit(() -> {
+                        try {
+                            return new SourceAttempt(source.name,
+                                    sourceSearchUrls.get(source.name),
+                                    resolveSource(source, generation), "");
+                        } catch (Exception exception) {
+                            String message = exception.getMessage();
+                            return new SourceAttempt(source.name,
+                                    sourceSearchUrls.get(source.name), null,
+                                    message == null || message.isBlank() ? "解析失败" : message);
+                        }
+                    });
                 }
                 collectingSources = true;
                 boolean delivered = false;
+                java.util.HashSet<String> completedSources = new java.util.HashSet<>();
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
                 for (int completed = 0; completed < sources.size(); completed++) {
                     long remaining = deadline - System.nanoTime();
                     if (remaining <= 0) break;
-                    java.util.concurrent.Future<ResolveResult> future =
+                    java.util.concurrent.Future<SourceAttempt> future =
                             completion.poll(remaining, TimeUnit.NANOSECONDS);
                     if (future == null) break;
                     try {
-                        ResolveResult result = future.get();
+                        SourceAttempt attempt = future.get();
+                        completedSources.add(attempt.source);
+                        if (attempt.result == null) {
+                            broadcastSourceState(attempt.source,
+                                    PlayerActivity.SOURCE_FAILED, "", attempt.error,
+                                    attempt.siteUrl);
+                            continue;
+                        }
+                        ResolveResult result = attempt.result;
                         if (!delivered) {
                             delivered = true;
                             runOnUiThread(() -> {
@@ -370,8 +402,15 @@ public class MainActivity extends Activity {
                                 deliverVideo(result.videoUrl);
                             });
                         }
-                        broadcastSource(result);
+                        broadcastSourceState(result.source, PlayerActivity.SOURCE_READY,
+                                result.videoUrl, "", attempt.siteUrl);
                     } catch (Exception ignored) {
+                    }
+                }
+                for (SourceConfig source : sources) {
+                    if (!completedSources.contains(source.name)) {
+                        broadcastSourceState(source.name, PlayerActivity.SOURCE_FAILED,
+                                "", "解析超时", sourceSearchUrls.get(source.name));
                     }
                 }
                 collectingSources = false;
@@ -738,6 +777,10 @@ public class MainActivity extends Activity {
     ) {
     }
 
+    private record SourceAttempt(
+            String source, String siteUrl, ResolveResult result, String error) {
+    }
+
     private void scheduleProbe(long delayMillis) {
         int generation = probeGeneration;
         handler.postDelayed(() -> {
@@ -958,13 +1001,18 @@ public class MainActivity extends Activity {
         finish();
     }
 
-    private void broadcastSource(ResolveResult result) {
-        PlayerActivity.cacheResolvedSource(requestedEpisode, result.source, result.videoUrl);
+    private void broadcastSourceState(
+            String sourceName, String status, String videoUrl, String error, String siteUrl) {
+        PlayerActivity.cacheSourceState(
+                requestedEpisode, sourceName, status, videoUrl, error, siteUrl);
         Intent update = new Intent(PlayerActivity.ACTION_SOURCE_RESULT);
         update.setPackage(getPackageName());
         update.putExtra("episode", requestedEpisode);
-        update.putExtra("source_name", result.source);
-        update.putExtra("video_url", result.videoUrl);
+        update.putExtra("source_name", sourceName);
+        update.putExtra("source_status", status);
+        update.putExtra("video_url", videoUrl);
+        update.putExtra("source_error", error);
+        update.putExtra("source_site_url", siteUrl);
         sendBroadcast(update);
     }
 

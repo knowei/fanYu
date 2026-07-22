@@ -2,6 +2,7 @@ package com.example.animeresolver;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -12,6 +13,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
@@ -23,6 +25,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.squareup.picasso.Picasso;
+import com.google.android.material.button.MaterialButton;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -111,8 +114,8 @@ public class HomeActivity extends Activity {
         nav.setPadding(dp(8), dp(5), dp(8), dp(8));
         nav.setBackgroundColor(Color.WHITE);
 
-        broadcastTab = navButton("放送", android.R.drawable.ic_menu_agenda);
-        myTab = navButton("我的", android.R.drawable.ic_menu_myplaces);
+        broadcastTab = navButton("放送", R.drawable.ic_calendar_today_24);
+        myTab = navButton("我的", R.drawable.ic_person_outline_24);
         broadcastTab.setOnClickListener(v -> showBroadcastPage());
         myTab.setOnClickListener(v -> showMyPage());
         nav.addView(broadcastTab, new LinearLayout.LayoutParams(0, dp(62), 1));
@@ -128,6 +131,11 @@ public class HomeActivity extends Activity {
         button.setGravity(Gravity.CENTER);
         button.setAllCaps(false);
         button.setCompoundDrawablesWithIntrinsicBounds(0, icon, 0, 0);
+        button.setCompoundDrawablePadding(dp(3));
+        button.setPadding(0, dp(7), 0, dp(4));
+        button.setMinHeight(0);
+        button.setMinWidth(0);
+        button.setStateListAnimator(null);
         button.setBackgroundColor(Color.TRANSPARENT);
         return button;
     }
@@ -154,29 +162,37 @@ public class HomeActivity extends Activity {
 
         EditText search = new EditText(this);
         search.setHint("搜索番剧");
-        search.setTextSize(16);
+        search.setTextSize(15);
+        search.setTextColor(INK);
+        search.setHintTextColor(Color.rgb(139, 143, 151));
         search.setSingleLine(true);
         search.setInputType(InputType.TYPE_CLASS_TEXT);
         search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.setCompoundDrawablesWithIntrinsicBounds(
-                android.R.drawable.ic_menu_search, 0, 0, 0);
-        search.setCompoundDrawablePadding(dp(12));
-        search.setPadding(dp(16), 0, dp(16), 0);
+                R.drawable.ic_search_24, 0, 0, 0);
+        search.getCompoundDrawables()[0].setTint(MUTED);
+        search.setCompoundDrawablePadding(dp(10));
+        search.setPadding(dp(15), 0, dp(15), 0);
         GradientDrawable searchBackground = new GradientDrawable();
-        searchBackground.setColor(Color.WHITE);
-        searchBackground.setCornerRadius(dp(12));
-        searchBackground.setStroke(dp(1), Color.rgb(210, 213, 218));
+        searchBackground.setColor(Color.rgb(243, 245, 248));
+        searchBackground.setCornerRadius(dp(14));
         search.setBackground(searchBackground);
         search.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH ||
                     (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
                 String keyword = search.getText().toString().trim();
-                if (!keyword.isEmpty()) searchSubjects(keyword);
+                if (!keyword.isEmpty()) {
+                    InputMethodManager keyboard = (InputMethodManager)
+                            getSystemService(INPUT_METHOD_SERVICE);
+                    keyboard.hideSoftInputFromWindow(search.getWindowToken(), 0);
+                    search.clearFocus();
+                    searchSubjects(keyword);
+                }
                 return true;
             }
             return false;
         });
-        page.addView(search, matchWrap(dp(58), 0, 0, 18));
+        page.addView(search, matchWrap(dp(50), 0, 0, 20));
         LinearLayout titleRow = new LinearLayout(this);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView broadcastTitle = label("今日放送", 22, INK, true);
@@ -227,14 +243,14 @@ public class HomeActivity extends Activity {
             day.setGravity(Gravity.CENTER);
             day.setLineSpacing(dp(3), 1f);
             day.setTag(date);
-            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(255, 248, 220), 10));
+            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(235, 243, 255), 10));
             day.setOnClickListener(v -> {
                 for (int child = 0; child < rail.getChildCount(); child++) {
                     TextView item = (TextView) rail.getChildAt(child);
                     boolean selected = date.equals(item.getTag());
                     item.setTextColor(selected ? BLUE : INK);
                     item.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-                    item.setBackground(selected ? roundedRect(Color.rgb(255, 248, 220), 10) : null);
+                    item.setBackground(selected ? roundedRect(Color.rgb(235, 243, 255), 10) : null);
                 }
                 onSelect.accept(date);
             });
@@ -308,19 +324,19 @@ public class HomeActivity extends Activity {
 
     private String subjectImage(JSONObject images) {
         if (images == null) return "";
-        String value = images.optString("medium");
+        String value = images.optString("large");
         if (value.isBlank()) value = images.optString("common");
-        if (value.isBlank()) value = images.optString("large");
+        if (value.isBlank()) value = images.optString("medium");
         if (value.isBlank()) value = images.optString("small");
         return secureImage(value);
     }
 
     private String listImage(String url) {
         // 搜索接口的 medium/common 字段通常是 /r/800/... 或 /r/400/...。
-        // 图片代理只提供普通 /pic 路径，因此移除尺寸前缀后再用列表尺寸。
+        // 图片代理只提供普通 /pic 路径；保留大图并交给 Picasso 缩小，
+        // 避免高像素密度手机把 m 尺寸封面放大后变模糊。
         return secureImage(url)
-                .replaceFirst("/r/\\d+(/pic/cover/)", "$1")
-                .replace("/pic/cover/l/", "/pic/cover/m/");
+                .replaceFirst("/r/\\d+(/pic/cover/)", "$1");
     }
 
     private void renderSubjects(LinearLayout target, List<Subject> subjects, boolean search) {
@@ -452,16 +468,35 @@ public class HomeActivity extends Activity {
 
     private void searchSubjects(String keyword) {
         page.removeAllViews();
-        Button back = new Button(this);
-        back.setText("‹ 返回放送");
-        back.setTextColor(BLUE);
-        back.setTextSize(14);
-        back.setAllCaps(false);
-        back.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        LinearLayout searchHeader = new LinearLayout(this);
+        searchHeader.setGravity(Gravity.CENTER_VERTICAL);
+        MaterialButton back = new MaterialButton(this);
+        back.setText("");
+        back.setIconResource(R.drawable.ic_arrow_back_24);
+        back.setIconTint(ColorStateList.valueOf(INK));
+        back.setIconSize(dp(24));
+        back.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_START);
+        back.setIconPadding(0);
+        back.setInsetTop(0);
+        back.setInsetBottom(0);
+        back.setMinWidth(0);
+        back.setMinHeight(0);
+        back.setPadding(dp(12), 0, dp(12), 0);
+        back.setContentDescription("返回放送");
+        back.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
         back.setBackgroundColor(Color.TRANSPARENT);
+        back.setRippleColor(ColorStateList.valueOf(Color.argb(24, 20, 105, 245)));
+        back.setCornerRadius(dp(24));
+        back.setElevation(0f);
+        back.setStateListAnimator(null);
         back.setOnClickListener(v -> showBroadcastPage());
-        page.addView(back, matchWrap(dp(48), 0, 0, 8));
-        page.addView(label("“" + keyword + "” 的搜索结果", 24, INK, true), matchWrap(0, 0, 0, 18));
+        searchHeader.addView(back, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        TextView searchTitle = label("搜索结果", 21, INK, true);
+        searchTitle.setPadding(dp(4), 0, 0, 0);
+        searchHeader.addView(searchTitle, new LinearLayout.LayoutParams(0, dp(48), 1));
+        page.addView(searchHeader, matchWrap(dp(48), 0, 0, 6));
+        page.addView(label("“" + keyword + "”", 14, MUTED, false),
+                matchWrap(0, dp(52), 0, 14));
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         results.addView(new ProgressBar(this), matchWrap(dp(72), 0, 0, 0));
@@ -513,66 +548,77 @@ public class HomeActivity extends Activity {
     private void showMyPage() {
         selectTab(false);
         page.removeAllViews();
-        page.addView(label("我的", 30, INK, true), matchWrap(0, 0, 0, 26));
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label("我的", 28, INK, true);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        TextView settings = label("设置", 14, MUTED, false);
+        settings.setGravity(Gravity.CENTER);
+        header.addView(settings, new LinearLayout.LayoutParams(dp(54), dp(48)));
+        page.addView(header, matchWrap(dp(48), 0, 0, 22));
         android.content.SharedPreferences prefs = getSharedPreferences("watching", MODE_PRIVATE);
         String lastName = prefs.getString("name", "");
         String lastCover = prefs.getString("cover", "");
         int lastEpisode = prefs.getInt("episode", 1);
 
-        page.addView(sectionTitle("继续观看", android.R.drawable.ic_media_play));
+        page.addView(mySectionTitle("继续观看", ""));
         if (lastName.isEmpty()) {
-            TextView empty = label("播放过的番剧会出现在这里", 15, MUTED, false);
+            TextView empty = label("播放过的番剧会出现在这里", 14, MUTED, false);
             empty.setGravity(Gravity.CENTER);
-            page.addView(empty, matchWrap(dp(110), 0, 0, 18));
+            empty.setBackground(roundedRect(Color.rgb(245, 248, 253), 12));
+            page.addView(empty, matchWrap(dp(86), 0, 10, 28));
         } else {
-            page.addView(recentRow(lastName, lastCover, lastEpisode));
+            page.addView(recentRow(lastName, lastCover, lastEpisode), matchWrap(dp(158), 0, 10, 30));
         }
 
-        page.addView(sectionTitle("我的收藏", android.R.drawable.btn_star_big_off), matchWrap(0, 0, 8, 0));
         String favoritesJson = prefs.getString("favorites", "[]");
         try {
             JSONArray favorites = new JSONArray(favoritesJson);
+            page.addView(mySectionTitle("收藏", favorites.length() == 0 ? "" : favorites.length() + " 部"));
             if (favorites.length() == 0) {
-                TextView emptyFavorites = label("收藏的番剧将在这里组成片单", 15, MUTED, false);
-                emptyFavorites.setGravity(Gravity.CENTER);
-                page.addView(emptyFavorites, matchWrap(dp(92), 0, 0, 12));
+                TextView emptyFavorites = label("收藏的番剧会在这里组成片单", 14, MUTED, false);
+                emptyFavorites.setGravity(Gravity.CENTER_VERTICAL);
+                page.addView(emptyFavorites, matchWrap(dp(70), 0, 8, 22));
             } else {
-                page.addView(favoritesRow(favorites), matchWrap(dp(184), 0, 12, 18));
+                page.addView(favoritesRow(favorites), matchWrap(dp(184), 0, 12, 30));
             }
         } catch (Exception ignored) {
         }
-        page.addView(settingsRow("播放记录", android.R.drawable.ic_menu_recent_history));
-        page.addView(settingsRow("数据与缓存", android.R.drawable.ic_menu_save));
-        page.addView(settingsRow("关于", android.R.drawable.ic_menu_info_details));
+        page.addView(mySectionTitle("更多", ""), matchWrap(0, 0, 0, 4));
+        page.addView(settingsRow("播放记录", R.drawable.ic_history_24));
+        page.addView(settingsRow("数据与缓存", R.drawable.ic_folder_outline_24));
     }
 
     private View recentRow(String name, String coverUrl, int episode) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(12), 0, dp(22));
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+        row.setBackground(roundedRect(Color.rgb(244, 248, 255), 12));
         ImageView cover = new ImageView(this);
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
         cover.setBackgroundColor(Color.rgb(238, 240, 244));
-        row.addView(cover, new LinearLayout.LayoutParams(dp(112), dp(150)));
+        row.addView(cover, new LinearLayout.LayoutParams(dp(88), dp(128)));
         if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
-        info.setPadding(dp(18), dp(10), 0, 0);
-        TextView title = label(name, 19, INK, true);
+        info.setPadding(dp(16), dp(2), 0, 0);
+        TextView title = label(name, 17, INK, true);
         title.setMaxLines(2);
         info.addView(title);
-        info.addView(label("看到第 " + episode + " 集", 14, MUTED, false), matchWrap(0, 0, 10, 0));
+        info.addView(label("第 " + episode + " 集", 13, MUTED, false), matchWrap(0, 0, 4, 0));
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setProgress(42);
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(BLUE));
-        info.addView(progress, matchWrap(dp(4), 0, 14, 12));
-        Button resume = new Button(this);
+        info.addView(progress, matchWrap(dp(4), 0, 6, 2));
+        Button resume = new Button(this, null, android.R.attr.borderlessButtonStyle);
         resume.setText("继续播放");
         resume.setTextColor(BLUE);
-        resume.setTextSize(14);
+        resume.setTextSize(15);
         resume.setAllCaps(false);
-        resume.setBackgroundColor(Color.TRANSPARENT);
         resume.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        resume.setMinHeight(0);
+        resume.setMinimumHeight(0);
+        resume.setPadding(0, 0, 0, 0);
         resume.setOnClickListener(v -> {
             Intent intent = new Intent(this, PlayerActivity.class);
             intent.putExtra("subject_name", name);
@@ -580,57 +626,69 @@ public class HomeActivity extends Activity {
             intent.putExtra("episode", episode);
             startActivity(intent);
         });
-        info.addView(resume, matchWrap(dp(46), 0, 0, 0));
-        row.addView(info, new LinearLayout.LayoutParams(0, dp(150), 1));
+        info.addView(resume, matchWrap(dp(40), 0, 0, 0));
+        row.addView(info, new LinearLayout.LayoutParams(0, dp(128), 1));
         return row;
     }
 
     private View favoritesRow(JSONArray favorites) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.TOP);
-        for (int index = 0; index < Math.min(3, favorites.length()); index++) {
+        for (int index = 0; index < favorites.length(); index++) {
             JSONObject item = favorites.optJSONObject(index);
             if (item == null) continue;
             String name = item.optString("name");
             String coverUrl = item.optString("cover");
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            if (index > 0) card.setPadding(dp(10), 0, 0, 0);
+            if (index > 0) card.setPadding(dp(12), 0, 0, 0);
             ImageView cover = new ImageView(this);
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
             cover.setBackgroundColor(Color.rgb(238, 240, 244));
             card.addView(cover, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(142)));
+                    dp(102), dp(136)));
             if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
             TextView title = label(name, 13, INK, true);
             title.setMaxLines(1);
-            card.addView(title, matchWrap(dp(38), 0, 4, 0));
+            card.addView(title, new LinearLayout.LayoutParams(dp(102), dp(32)));
             card.setOnClickListener(v -> openSubject(new Subject(0, name, name, coverUrl, 0, "收藏")));
-            row.addView(card, new LinearLayout.LayoutParams(0, dp(184), 1));
+            row.addView(card, new LinearLayout.LayoutParams(dp(102), dp(172)));
         }
-        return row;
+        scroll.addView(row, new HorizontalScrollView.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return scroll;
     }
 
-    private View sectionTitle(String text, int icon) {
-        TextView title = label(text, 21, INK, true);
-        title.setCompoundDrawablesWithIntrinsicBounds(icon, 0, 0, 0);
-        title.setCompoundDrawablePadding(dp(12));
-        return title;
+    private View mySectionTitle(String text, String trailing) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label(text, 20, INK, true);
+        row.addView(title, new LinearLayout.LayoutParams(0, dp(32), 1));
+        if (!trailing.isEmpty()) {
+            TextView count = label(trailing, 13, MUTED, false);
+            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            row.addView(count, new LinearLayout.LayoutParams(dp(48), dp(32)));
+        }
+        return row;
     }
 
     private View settingsRow(String text, int icon) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(10), 0, dp(10), 0);
-        row.setBackgroundColor(Color.WHITE);
+        row.setPadding(0, 0, 0, 0);
         ImageView image = new ImageView(this);
         image.setImageResource(icon);
         image.setColorFilter(BLUE);
-        row.addView(image, new LinearLayout.LayoutParams(dp(26), dp(26)));
-        TextView title = label(text, 17, INK, false);
-        title.setPadding(dp(16), 0, 0, 0);
-        row.addView(title, new LinearLayout.LayoutParams(0, dp(62), 1));
-        row.addView(label("›", 24, MUTED, false), new LinearLayout.LayoutParams(dp(24), dp(62)));
+        row.addView(image, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        TextView title = label(text, 16, INK, false);
+        title.setPadding(dp(14), 0, 0, 0);
+        row.addView(title, new LinearLayout.LayoutParams(0, dp(58), 1));
+        ImageView arrow = new ImageView(this);
+        arrow.setImageResource(R.drawable.ic_chevron_right_24);
+        arrow.setColorFilter(MUTED);
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(24), dp(58)));
         return row;
     }
 

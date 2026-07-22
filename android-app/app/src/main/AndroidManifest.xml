@@ -4,7 +4,9 @@
 
     <application
         android:allowBackup="true"
-        android:label="番屿"
+        android:icon="@drawable/ic_launcher_fanyu"
+        android:label="番遇"
+        android:roundIcon="@drawable/ic_launcher_fanyu"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity"

@@ -47,7 +47,6 @@ public class DetailActivity extends Activity {
     private final OkHttpClient client = new OkHttpClient();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private LinearLayout content;
-    private Button playButton;
     private MaterialButton favoriteButton;
     private int subjectId;
     private int selectedEpisode = 1;
@@ -112,18 +111,6 @@ public class DetailActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        playButton = new Button(this);
-        playButton.setText("播放第1集");
-        playButton.setTextColor(Color.WHITE);
-        playButton.setTextSize(17);
-        playButton.setAllCaps(false);
-        playButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        playButton.setBackground(rounded(BLUE, 12, 0, 0));
-        playButton.setOnClickListener(v -> resolveSelectedEpisode());
-        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(58));
-        playParams.setMargins(dp(20), dp(8), dp(20), dp(18));
-        root.addView(playButton, playParams);
         setContentView(root);
     }
 
@@ -233,7 +220,10 @@ public class DetailActivity extends Activity {
                 14, MUTED, false), margins(0, 17, 0));
         String platform = subject.optString("platform", "动画");
         meta.addView(text(platform.isBlank() ? "动画" : platform, 14, MUTED, false), margins(0, 12, 0));
-        hero.addView(meta, new LinearLayout.LayoutParams(0, dp(220), 1));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        meta.setMinimumHeight(dp(218));
+        hero.addView(meta, metaParams);
         content.addView(hero);
         content.addView(divider(), margins(0, 20, 20));
 
@@ -255,7 +245,7 @@ public class DetailActivity extends Activity {
         LinearLayout episodeHeader = new LinearLayout(this);
         episodeHeader.setGravity(Gravity.CENTER_VERTICAL);
         episodeHeader.addView(text("选集", 21, INK, true), new LinearLayout.LayoutParams(0, dp(48), 1));
-        TextView source = text("自动选择最快线路  ›", 14, BLUE, true);
+        TextView source = text("点击集数直接播放", 14, BLUE, true);
         source.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         episodeHeader.addView(source, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
@@ -277,35 +267,31 @@ public class DetailActivity extends Activity {
             button.setText(String.valueOf(episode));
             button.setTextSize(16);
             button.setAllCaps(false);
+            button.setMinWidth(0);
+            button.setMinimumWidth(0);
+            button.setMinHeight(0);
+            button.setMinimumHeight(0);
+            button.setPadding(0, 0, 0, 0);
+            button.setStateListAnimator(null);
             button.setTag(episode);
-            styleEpisode(button, episode == selectedEpisode);
+            styleEpisode(button, false);
             button.setOnClickListener(v -> {
                 selectedEpisode = (int) v.getTag();
-                restyleEpisodeButtons();
-                playButton.setText("播放第" + selectedEpisode + "集");
+                resolveSelectedEpisode();
             });
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(58), 1);
-            params.setMargins(dp(4), dp(3), dp(4), dp(3));
-            row.addView(button, params);
+            row.addView(button, episodeCellParams());
         }
         if (row != null) {
             while (row.getChildCount() < columns) {
-                row.addView(new View(this), new LinearLayout.LayoutParams(0, dp(58), 1));
+                row.addView(new View(this), episodeCellParams());
             }
         }
     }
 
-    private void restyleEpisodeButtons() {
-        for (int i = 0; i < content.getChildCount(); i++) {
-            View child = content.getChildAt(i);
-            if (!(child instanceof LinearLayout row)) continue;
-            for (int j = 0; j < row.getChildCount(); j++) {
-                View item = row.getChildAt(j);
-                if (item instanceof Button button && button.getTag() instanceof Integer episode) {
-                    styleEpisode(button, episode == selectedEpisode);
-                }
-            }
-        }
+    private LinearLayout.LayoutParams episodeCellParams() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(58), 1);
+        params.setMargins(dp(4), dp(3), dp(4), dp(3));
+        return params;
     }
 
     private void styleEpisode(Button button, boolean selected) {

@@ -1,7 +1,6 @@
 package com.example.animeresolver;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.IntentFilter;
@@ -15,6 +14,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,17 +22,21 @@ import android.widget.Button;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
 import com.squareup.picasso.Picasso;
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -41,8 +45,40 @@ import java.util.HashMap;
 public class PlayerActivity extends Activity {
     public static final String ACTION_SOURCE_RESULT =
             "com.example.animeresolver.SOURCE_RESULT";
+    public static final String SOURCE_LOADING = "loading";
+    public static final String SOURCE_READY = "ready";
+    public static final String SOURCE_FAILED = "failed";
     private static final Map<Integer, LinkedHashMap<String, String>> SOURCE_CACHE =
             new HashMap<>();
+    private static final Map<Integer, LinkedHashMap<String, SourceState>> SOURCE_STATE_CACHE =
+            new HashMap<>();
+
+    private record SourceState(String status, String url, String error, String siteUrl) {}
+
+    public static synchronized void beginSourceResolution(
+            int episode, java.util.Map<String, String> sourceSites) {
+        LinkedHashMap<String, SourceState> states = new LinkedHashMap<>();
+        for (Map.Entry<String, String> source : sourceSites.entrySet()) {
+            states.put(source.getKey(), new SourceState(
+                    SOURCE_LOADING, "", "", source.getValue()));
+        }
+        SOURCE_STATE_CACHE.put(episode, states);
+        SOURCE_CACHE.remove(episode);
+    }
+
+    public static synchronized void cacheSourceState(
+            int episode, String name, String status, String url, String error, String siteUrl) {
+        SourceState previous = SOURCE_STATE_CACHE
+                .getOrDefault(episode, new LinkedHashMap<>()).get(name);
+        String resolvedSiteUrl = siteUrl == null || siteUrl.isBlank()
+                ? previous == null ? "" : previous.siteUrl : siteUrl;
+        SOURCE_STATE_CACHE.computeIfAbsent(episode, ignored -> new LinkedHashMap<>())
+                .put(name, new SourceState(status, url == null ? "" : url,
+                        error == null ? "" : error, resolvedSiteUrl));
+        if (SOURCE_READY.equals(status) && url != null && !url.isBlank()) {
+            cacheResolvedSource(episode, name, url);
+        }
+    }
 
     public static synchronized void cacheResolvedSource(int episode, String name, String url) {
         SOURCE_CACHE.computeIfAbsent(episode, ignored -> new LinkedHashMap<>()).put(name, url);
@@ -50,6 +86,11 @@ public class PlayerActivity extends Activity {
 
     private static synchronized LinkedHashMap<String, String> cachedSources(int episode) {
         return new LinkedHashMap<>(SOURCE_CACHE.getOrDefault(episode, new LinkedHashMap<>()));
+    }
+
+    private static synchronized LinkedHashMap<String, SourceState> cachedSourceStates(int episode) {
+        return new LinkedHashMap<>(SOURCE_STATE_CACHE.getOrDefault(
+                episode, new LinkedHashMap<>()));
     }
 
     private static synchronized void clearCachedSources(int episode) {
@@ -85,6 +126,11 @@ public class PlayerActivity extends Activity {
     private LinearLayout controlDock;
     private TextView playbackTimeView;
     private Button dockSourceButton;
+    private String currentSourceName = "";
+    private BottomSheetDialog sourceDialog;
+    private LinearLayout sourceListContainer;
+    private TextView sourceSummaryView;
+    private ScrollView sourceScrollView;
     private boolean fullscreen;
     private final Runnable hideControls = () -> {
         if (player != null && player.isPlaying() && controlDock != null) controlDock.setVisibility(View.GONE);
@@ -100,17 +146,58 @@ public class PlayerActivity extends Activity {
             progressHandler.postDelayed(this, 500);
         }
     };
+    private final Player.Listener playbackListener = new Player.Listener() {
+        @Override public void onPlaybackStateChanged(int playbackState) {
+            if (playbackState != Player.STATE_READY || currentSourceName.isBlank()) return;
+            SourceState state = sourceStates.get(currentSourceName);
+            if (state == null || state.url.isBlank()) return;
+            sourceStates.put(currentSourceName,
+                    new SourceState(SOURCE_READY, state.url, "", state.siteUrl));
+            cacheSourceState(episode, currentSourceName,
+                    SOURCE_READY, state.url, "", state.siteUrl);
+            updateSourceStatus();
+            renderSourcePicker();
+        }
+
+        @Override public void onPlayerError(PlaybackException error) {
+            if (currentSourceName.isBlank()) return;
+            SourceState state = sourceStates.get(currentSourceName);
+            if (state == null) return;
+            String message = error.getErrorCodeName();
+            sourceStates.put(currentSourceName,
+                    new SourceState(SOURCE_FAILED, state.url, message, state.siteUrl));
+            cacheSourceState(episode, currentSourceName,
+                    SOURCE_FAILED, state.url, message, state.siteUrl);
+            updateSourceStatus();
+            renderSourcePicker();
+        }
+    };
     private final LinkedHashMap<String, String> sources = new LinkedHashMap<>();
+    private final LinkedHashMap<String, SourceState> sourceStates = new LinkedHashMap<>();
     private final BroadcastReceiver sourceReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (intent.getIntExtra("episode", -1) != episode) return;
             String name = intent.getStringExtra("source_name");
             String url = intent.getStringExtra("video_url");
-            if (name == null || url == null || url.isBlank()) return;
-            boolean first = sources.isEmpty();
-            sources.put(name, url);
-            if (first) playUrl(name, url);
+            String status = intent.getStringExtra("source_status");
+            String error = intent.getStringExtra("source_error");
+            String siteUrl = intent.getStringExtra("source_site_url");
+            if (name == null || name.isBlank()) return;
+            if (status == null || status.isBlank()) status = SOURCE_READY;
+            SourceState previous = sourceStates.get(name);
+            if ((siteUrl == null || siteUrl.isBlank()) && previous != null) {
+                siteUrl = previous.siteUrl;
+            }
+            sourceStates.put(name, new SourceState(status,
+                    url == null ? "" : url, error == null ? "" : error,
+                    siteUrl == null ? "" : siteUrl));
+            if (SOURCE_READY.equals(status) && url != null && !url.isBlank()) {
+                boolean shouldAutoPlay = videoUrl == null || videoUrl.isBlank();
+                sources.put(name, url);
+                if (shouldAutoPlay) playUrl(name, url);
+            }
             updateSourceStatus();
+            renderSourcePicker();
         }
     };
 
@@ -128,8 +215,16 @@ public class PlayerActivity extends Activity {
         bangumiId = getIntent().getIntExtra("bangumi_id", 0);
         availableEpisodes = Math.max(1, getIntent().getIntExtra("available_episodes", 12));
         initialSourceName = getIntent().getStringExtra("source_name");
+        sourceStates.putAll(cachedSourceStates(episode));
         sources.putAll(cachedSources(episode));
-        if (initialSourceName != null && videoUrl != null) sources.put(initialSourceName, videoUrl);
+        if (initialSourceName != null && videoUrl != null) {
+            sources.put(initialSourceName, videoUrl);
+            SourceState previous = sourceStates.get(initialSourceName);
+            sourceStates.put(initialSourceName,
+                    new SourceState(SOURCE_READY, videoUrl, "",
+                            previous == null ? "" : previous.siteUrl));
+            currentSourceName = initialSourceName;
+        }
         if (subjectName == null) subjectName = "正在播放";
         if (subjectCover == null) subjectCover = "";
         buildUi();
@@ -194,11 +289,13 @@ public class PlayerActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         videoFrame.setOnClickListener(v -> toggleControls());
+        addPlayerControls();
+        android.widget.FrameLayout.LayoutParams controlsParams =
+                new android.widget.FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM);
+        videoFrame.addView(controlDock, controlsParams);
         playerArea.addView(videoFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(221)));
-        addPlayerControls();
-        playerArea.addView(controlDock, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(88)));
         rootView.addView(playerArea, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -269,7 +366,7 @@ public class PlayerActivity extends Activity {
         controlDock = new LinearLayout(this);
         controlDock.setOrientation(LinearLayout.VERTICAL);
         controlDock.setPadding(dp(12), dp(2), dp(8), dp(6));
-        controlDock.setBackgroundColor(Color.rgb(20, 24, 29));
+        controlDock.setBackgroundColor(Color.argb(224, 20, 24, 29));
         progressBar = new SeekBar(this);
         progressBar.setMax(1000);
         progressBar.setProgressTintList(ColorStateList.valueOf(BLUE));
@@ -410,7 +507,7 @@ public class PlayerActivity extends Activity {
 
     private void initializePlayer() {
         if (videoUrl == null || videoUrl.isBlank()) return;
-        player = new ExoPlayer.Builder(this).build();
+        player = createPlayer();
         playerView.setPlayer(player);
         player.setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)));
         player.prepare();
@@ -420,8 +517,12 @@ public class PlayerActivity extends Activity {
 
     private void playUrl(String sourceName, String url) {
         videoUrl = url;
+        currentSourceName = sourceName;
+        SourceState previous = sourceStates.get(sourceName);
+        sourceStates.put(sourceName, new SourceState(SOURCE_LOADING, url, "",
+                previous == null ? "" : previous.siteUrl));
         if (player == null) {
-            player = new ExoPlayer.Builder(this).build();
+            player = createPlayer();
             playerView.setPlayer(player);
         }
         player.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
@@ -431,24 +532,220 @@ public class PlayerActivity extends Activity {
         sourceButton.setText(sourceName);
         dockSourceButton.setText(sourceName);
         updateSourceStatus();
+        renderSourcePicker();
+    }
+
+    private ExoPlayer createPlayer() {
+        ExoPlayer value = new ExoPlayer.Builder(this).build();
+        value.addListener(playbackListener);
+        return value;
     }
 
     private void updateSourceStatus() {
         if (sourceStatusView != null) {
-            sourceStatusView.setText("已找到 " + sources.size() + " 个视频源，后台仍在解析");
+            int loading = 0;
+            int failed = 0;
+            for (SourceState state : sourceStates.values()) {
+                if (SOURCE_LOADING.equals(state.status)) loading++;
+                if (SOURCE_FAILED.equals(state.status)) failed++;
+            }
+            int ready = 0;
+            for (SourceState state : sourceStates.values()) {
+                if (SOURCE_READY.equals(state.status)) ready++;
+            }
+            String summary = "可用 " + ready + " 条";
+            if (loading > 0) summary += " · " + loading + " 条解析中";
+            if (failed > 0) summary += " · " + failed + " 条失败";
+            sourceStatusView.setText(summary);
         }
     }
 
     private void showSourcePicker() {
-        if (sources.isEmpty()) {
-            new AlertDialog.Builder(this).setMessage("视频源仍在解析中，请稍候")
-                    .setPositiveButton("知道了", null).show();
+        sourceDialog = new BottomSheetDialog(this);
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(20), dp(16), dp(20), dp(28));
+        sheet.setBackground(rounded(Color.WHITE, 20, 0, 0));
+
+        TextView title = text("选择视频源", 21, INK, true);
+        sheet.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        sourceSummaryView = text("", 13, MUTED, false);
+        sheet.addView(sourceSummaryView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
+        sourceListContainer = new LinearLayout(this);
+        sourceListContainer.setOrientation(LinearLayout.VERTICAL);
+        sourceScrollView = new ScrollView(this);
+        sourceScrollView.addView(sourceListContainer);
+        sheet.addView(sourceScrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        sourceDialog.setContentView(sheet);
+        sourceDialog.setOnDismissListener(dialog -> {
+            sourceDialog = null;
+            sourceListContainer = null;
+            sourceSummaryView = null;
+            sourceScrollView = null;
+        });
+        renderSourcePicker();
+        sourceDialog.setOnShowListener(dialog -> {
+            View parent = (View) sheet.getParent();
+            if (parent != null) {
+                parent.getLayoutParams().height = dp(500);
+                parent.setBackgroundColor(Color.TRANSPARENT);
+            }
+        });
+        sourceDialog.show();
+    }
+
+    private void renderSourcePicker() {
+        if (sourceListContainer == null || sourceSummaryView == null) return;
+        boolean keepTop = sourceScrollView != null && sourceScrollView.getScrollY() < dp(20);
+        sourceListContainer.removeAllViews();
+        int loading = 0;
+        int ready = 0;
+        int failed = 0;
+        for (SourceState state : sourceStates.values()) {
+            if (SOURCE_LOADING.equals(state.status)) loading++;
+            else if (SOURCE_READY.equals(state.status)) ready++;
+            else if (SOURCE_FAILED.equals(state.status)) failed++;
+        }
+        sourceSummaryView.setText("全部 " + sourceStates.size() + " · 可用 " + ready
+                + " · 解析中 " + loading + " · 失败 " + failed);
+        if (sourceStates.isEmpty()) {
+            TextView empty = text("正在读取视频源列表…", 15, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            sourceListContainer.addView(empty, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(100)));
             return;
         }
-        String[] names = sources.keySet().toArray(new String[0]);
-        new AlertDialog.Builder(this).setTitle("选择视频源")
-                .setItems(names, (dialog, which) -> playUrl(names[which], sources.get(names[which])))
-                .setNegativeButton("取消", null).show();
+        java.util.List<Map.Entry<String, SourceState>> ordered =
+                new java.util.ArrayList<>(sourceStates.entrySet());
+        ordered.sort(java.util.Comparator.comparingInt(entry -> sourceRank(
+                entry.getKey(), entry.getValue())));
+        for (Map.Entry<String, SourceState> entry : ordered) {
+            sourceListContainer.addView(sourceRow(entry.getKey(), entry.getValue()));
+        }
+        ScrollView scroll = sourceScrollView;
+        if (keepTop && scroll != null) {
+            scroll.post(() -> scroll.scrollTo(0, 0));
+        }
+    }
+
+    private int sourceRank(String name, SourceState state) {
+        if (name.equals(currentSourceName)) return 0;
+        if (SOURCE_READY.equals(state.status)) return 1;
+        if (SOURCE_LOADING.equals(state.status)) return 2;
+        return 3;
+    }
+
+    private View sourceRow(String name, SourceState state) {
+        boolean current = name.equals(currentSourceName);
+        boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
+        boolean retryable = SOURCE_FAILED.equals(state.status) && !state.url.isBlank();
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(10), dp(12), dp(10));
+        row.setBackground(rounded(current ? Color.rgb(235, 243, 255) : Color.WHITE,
+                12, current ? Color.rgb(184, 211, 255) : LINE, 1));
+
+        if (SOURCE_LOADING.equals(state.status)) {
+            ProgressBar progress = new ProgressBar(this);
+            progress.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
+            row.addView(progress, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        } else {
+            View dot = new View(this);
+            int color = SOURCE_READY.equals(state.status)
+                    ? Color.rgb(31, 157, 85) : Color.rgb(220, 68, 74);
+            dot.setBackground(rounded(color, 6, 0, 0));
+            LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(12), dp(12));
+            dotParams.setMargins(dp(6), 0, dp(6), 0);
+            row.addView(dot, dotParams);
+        }
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(12), 0, dp(8), 0);
+        TextView sourceName = text(name, 16, INK, true);
+        labels.addView(sourceName, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(28)));
+        String detail;
+        int detailColor = MUTED;
+        if (current && SOURCE_LOADING.equals(state.status)) {
+            detail = "当前源正在加载…";
+            detailColor = BLUE;
+        } else if (current && SOURCE_FAILED.equals(state.status)) {
+            detail = "当前源加载失败 · " + compactError(state.error);
+            detailColor = Color.rgb(190, 52, 60);
+        } else if (current) {
+            detail = "当前播放 · 可用";
+            detailColor = BLUE;
+        } else if (SOURCE_LOADING.equals(state.status)) {
+            detail = "解析中…";
+        } else if (ready) {
+            detail = "可播放";
+        } else {
+            detail = "加载失败" + (state.error.isBlank() ? "" : " · " + compactError(state.error));
+            detailColor = Color.rgb(190, 52, 60);
+        }
+        TextView detailView = text(detail, 13, detailColor, false);
+        detailView.setMaxLines(1);
+        detailView.setEllipsize(TextUtils.TruncateAt.END);
+        labels.addView(detailView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
+        row.addView(labels, new LinearLayout.LayoutParams(0, dp(52), 1));
+
+        String actionText = retryable ? "重试" : current ? "使用中" : ready ? "切换" : "";
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.VERTICAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        TextView action = text(actionText, 14,
+                current || ready || retryable ? BLUE : MUTED, current && !retryable);
+        action.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        actions.addView(action, new LinearLayout.LayoutParams(dp(76), dp(28)));
+        TextView visit = text(state.siteUrl.isBlank() ? "" : "访问网站", 12, BLUE, false);
+        visit.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        if (!state.siteUrl.isBlank()) {
+            visit.setOnClickListener(v -> openSourceSite(state.siteUrl));
+        }
+        actions.addView(visit, new LinearLayout.LayoutParams(dp(76), dp(24)));
+        row.addView(actions, new LinearLayout.LayoutParams(dp(76), dp(52)));
+        if ((ready && !current) || retryable) row.setOnClickListener(v -> {
+            playUrl(name, state.url);
+            if (sourceDialog != null) sourceDialog.dismiss();
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
+        params.setMargins(0, dp(5), 0, dp(5));
+        row.setLayoutParams(params);
+        return row;
+    }
+
+    private void openSourceSite(String siteUrl) {
+        try {
+            Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(siteUrl));
+            startActivity(browser);
+        } catch (Exception exception) {
+            android.widget.Toast.makeText(this, "无法打开该网站",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private String compactError(String error) {
+        String value = error.replace('\n', ' ').trim();
+        String lower = value.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("failed to connect") || lower.contains("connection refused")) {
+            return "无法连接网站";
+        }
+        if (lower.contains("hostname") || lower.contains("certificate")) {
+            return "证书校验失败";
+        }
+        if (lower.contains("tls") || lower.contains("ssl")) return "安全连接失败";
+        if (lower.contains("http 403")) return "网站拒绝访问";
+        if (lower.contains("timeout") || lower.contains("timed out") || value.contains("超时")) {
+            return "连接超时";
+        }
+        if (value.contains("验证")) return "需要网站验证";
+        return value.length() > 24 ? value.substring(0, 24) + "…" : value;
     }
 
     private void resolveEpisode(int targetEpisode) {
@@ -459,6 +756,8 @@ public class PlayerActivity extends Activity {
     private void requestResolution(int targetEpisode, boolean changingEpisode) {
         episode = targetEpisode;
         sources.clear();
+        sourceStates.clear();
+        currentSourceName = "";
         clearCachedSources(episode);
         currentEpisodeView.setText("第" + episode + "集");
         sourceButton.setText("视频源");
