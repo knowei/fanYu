@@ -50,6 +50,7 @@ import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -109,6 +110,7 @@ public class MainActivity extends Activity {
     private String subjectCover = "";
     private int probeGeneration;
     private int navigationGeneration;
+    private volatile boolean destroyed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -356,24 +358,63 @@ public class MainActivity extends Activity {
                             "", "", source.getValue());
                 }
 
+                collectingSources = true;
                 CompletionService<SourceAttempt> completion =
                         new ExecutorCompletionService<>(networkExecutor);
+                AtomicBoolean delivered = new AtomicBoolean(false);
                 for (SourceConfig source : sources) {
                     completion.submit(() -> {
                         try {
+                            int resolvedCount = resolveSource(source, generation,
+                                    new SourceProgress() {
+                                        @Override
+                                        public void onDiscovered(List<EpisodeCandidate> candidates) {
+                                            broadcastSourceState(source.name,
+                                                    PlayerActivity.SOURCE_REMOVED,
+                                                    "", "", "");
+                                            for (EpisodeCandidate candidate : candidates) {
+                                                broadcastSourceState(candidate.sourceKey,
+                                                        PlayerActivity.SOURCE_LOADING,
+                                                        "", "", candidate.episodeUrl);
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onReady(ResolveResult result) {
+                                            broadcastSourceState(result.source,
+                                                    PlayerActivity.SOURCE_READY,
+                                                    result.videoUrl, "", result.episodeUrl);
+                                            if (delivered.compareAndSet(false, true)) {
+                                                runOnUiThread(() -> {
+                                                    if (generation != probeGeneration) return;
+                                                    resolvedSource = result.source;
+                                                    detailUrl = result.detailUrl;
+                                                    episodeUrl = result.episodeUrl;
+                                                    stage = Stage.PLAY;
+                                                    deliverVideo(result.videoUrl);
+                                                });
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onFailed(EpisodeCandidate candidate,
+                                                             String error) {
+                                            broadcastSourceState(candidate.sourceKey,
+                                                    PlayerActivity.SOURCE_FAILED,
+                                                    "", error, candidate.episodeUrl);
+                                        }
+                                    });
                             return new SourceAttempt(source.name,
                                     sourceSearchUrls.get(source.name),
-                                    resolveSource(source, generation), "");
+                                    resolvedCount, "");
                         } catch (Exception exception) {
                             String message = exception.getMessage();
                             return new SourceAttempt(source.name,
-                                    sourceSearchUrls.get(source.name), null,
+                                    sourceSearchUrls.get(source.name), 0,
                                     message == null || message.isBlank() ? "解析失败" : message);
                         }
                     });
                 }
-                collectingSources = true;
-                boolean delivered = false;
                 java.util.HashSet<String> completedSources = new java.util.HashSet<>();
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
                 for (int completed = 0; completed < sources.size(); completed++) {
@@ -385,25 +426,11 @@ public class MainActivity extends Activity {
                     try {
                         SourceAttempt attempt = future.get();
                         completedSources.add(attempt.source);
-                        if (attempt.result == null) {
+                        if (attempt.resolvedCount == 0 && !attempt.error.isBlank()) {
                             broadcastSourceState(attempt.source,
                                     PlayerActivity.SOURCE_FAILED, "", attempt.error,
                                     attempt.siteUrl);
-                            continue;
                         }
-                        ResolveResult result = attempt.result;
-                        if (!delivered) {
-                            delivered = true;
-                            runOnUiThread(() -> {
-                                resolvedSource = result.source;
-                                detailUrl = result.detailUrl;
-                                episodeUrl = result.episodeUrl;
-                                stage = Stage.PLAY;
-                                deliverVideo(result.videoUrl);
-                            });
-                        }
-                        broadcastSourceState(result.source, PlayerActivity.SOURCE_READY,
-                                result.videoUrl, "", attempt.siteUrl);
                     } catch (Exception ignored) {
                     }
                 }
@@ -414,7 +441,12 @@ public class MainActivity extends Activity {
                     }
                 }
                 collectingSources = false;
-                if (!delivered) throw new IOException("没有可用的视频源");
+                if (destroyed) {
+                    networkExecutor.shutdown();
+                    httpClient.connectionPool().evictAll();
+                    httpClient.dispatcher().executorService().shutdown();
+                }
+                if (!delivered.get()) throw new IOException("没有可用的视频源");
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     if (generation != probeGeneration) return;
@@ -457,19 +489,31 @@ public class MainActivity extends Activity {
             }
 
             String channelFormat = search.optString("channelFormatId", "index-grouped");
+            String channelSelector = "";
+            String channelNamePattern = "";
             String episodeContainer = "";
             String episodeSelector = "a";
+            String episodeLinkSelector = "";
+            String episodeNamePattern = "第\\s*(?<ep>.+)\\s*[话集]";
             if ("no-channel".equals(channelFormat)) {
                 JSONObject format = search.optJSONObject("selectorChannelFormatNoChannel");
                 if (format != null) {
                     episodeSelector = format.optString("selectEpisodes");
+                    episodeLinkSelector = format.optString("selectEpisodeLinks");
+                    episodeNamePattern = format.optString(
+                            "matchEpisodeSortFromName", episodeNamePattern);
                     episodeContainer = "";
                 }
             } else {
                 JSONObject format = search.optJSONObject("selectorChannelFormatFlattened");
                 if (format != null) {
+                    channelSelector = format.optString("selectChannelNames");
+                    channelNamePattern = format.optString("matchChannelName");
                     episodeContainer = format.optString("selectEpisodeLists");
                     episodeSelector = format.optString("selectEpisodesFromList", "a");
+                    episodeLinkSelector = format.optString("selectEpisodeLinksFromList");
+                    episodeNamePattern = format.optString(
+                            "matchEpisodeSortFromName", episodeNamePattern);
                 }
             }
             if (searchUrl.isBlank() || subjectSelector.isBlank() ||
@@ -480,8 +524,13 @@ public class MainActivity extends Activity {
                     subjectFormat,
                     subjectSelector,
                     subjectLinkSelector,
+                    channelFormat,
+                    channelSelector,
+                    channelNamePattern,
                     episodeContainer,
                     episodeSelector,
+                    episodeLinkSelector,
+                    episodeNamePattern,
                     arguments.optInt("tier", 99)
             ));
         }
@@ -489,7 +538,11 @@ public class MainActivity extends Activity {
         return result;
     }
 
-    private ResolveResult resolveSource(SourceConfig source, int generation) throws Exception {
+    private int resolveSource(
+            SourceConfig source,
+            int generation,
+            SourceProgress progress
+    ) throws Exception {
         if (generation != probeGeneration) throw new IOException("任务已取消");
         String searchUrl = source.searchUrl.replace(
                 "{keyword}", Uri.encode(requestedName));
@@ -531,25 +584,61 @@ public class MainActivity extends Activity {
         HttpPage detailPage = getPage(foundDetailUrl);
         if (isChallengePage(detailPage)) throw new IOException("需要验证");
         Document detailDocument = Jsoup.parse(detailPage.html, detailPage.url);
-        Element episode = selectEpisode(
-                detailDocument, source.episodeContainer, source.episodeSelector,
-                requestedEpisode);
-        if (episode == null) throw new IOException("剧集不存在");
-        String foundEpisodeUrl = episode.absUrl("href");
-        if (foundEpisodeUrl.isBlank()) throw new IOException("剧集链接为空");
+        List<EpisodeCandidate> candidates = selectEpisodeCandidates(
+                detailDocument, foundDetailUrl, source, requestedEpisode);
+        if (candidates.isEmpty()) throw new IOException("剧集不存在");
+        progress.onDiscovered(candidates);
 
-        HttpPage playPage = getPage(foundEpisodeUrl);
-        if (isChallengePage(playPage)) throw new IOException("需要验证");
-        String mediaUrl = extractPlayerMediaUrl(playPage.html);
-        if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
-            Matcher mediaMatcher = MEDIA_URL_PATTERN.matcher(playPage.html);
-            mediaUrl = mediaMatcher.find() ? mediaMatcher.group() : null;
+        CompletionService<ChannelAttempt> completion =
+                new ExecutorCompletionService<>(networkExecutor);
+        for (EpisodeCandidate candidate : candidates) {
+            completion.submit(() -> {
+                try {
+                    HttpPage playPage = getPage(candidate.episodeUrl);
+                    if (isChallengePage(playPage)) throw new IOException("需要验证");
+                    String mediaUrl = extractPlayerMediaUrl(playPage.html);
+                    if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
+                        Matcher mediaMatcher = MEDIA_URL_PATTERN.matcher(playPage.html);
+                        mediaUrl = mediaMatcher.find() ? mediaMatcher.group() : null;
+                    }
+                    if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
+                        throw new IOException("未发现直连媒体");
+                    }
+                    return new ChannelAttempt(candidate,
+                            new ResolveResult(candidate.sourceKey, foundDetailUrl,
+                                    candidate.episodeUrl, mediaUrl), "");
+                } catch (Exception exception) {
+                    String message = exception.getMessage();
+                    return new ChannelAttempt(candidate, null,
+                            message == null || message.isBlank() ? "解析失败" : message);
+                }
+            });
         }
-        if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
-            throw new IOException("未发现直连媒体");
+
+        int resolvedCount = 0;
+        java.util.HashSet<String> completed = new java.util.HashSet<>();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(35);
+        for (int index = 0; index < candidates.size(); index++) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) break;
+            java.util.concurrent.Future<ChannelAttempt> future =
+                    completion.poll(remaining, TimeUnit.NANOSECONDS);
+            if (future == null) break;
+            ChannelAttempt attempt = future.get();
+            completed.add(attempt.candidate.sourceKey);
+            if (attempt.result != null) {
+                resolvedCount++;
+                progress.onReady(attempt.result);
+            } else {
+                progress.onFailed(attempt.candidate, attempt.error);
+            }
         }
-        return new ResolveResult(
-                source.name, foundDetailUrl, foundEpisodeUrl, mediaUrl);
+        for (EpisodeCandidate candidate : candidates) {
+            if (!completed.contains(candidate.sourceKey)) {
+                progress.onFailed(candidate, "解析超时");
+            }
+        }
+        return resolvedCount;
     }
 
     private void resolveWithHttp(String searchUrl, int generation) {
@@ -704,6 +793,137 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    private List<EpisodeCandidate> selectEpisodeCandidates(
+            Document document,
+            String detailUrl,
+            SourceConfig source,
+            int wanted
+    ) {
+        List<EpisodeCandidate> raw = new ArrayList<>();
+        if ("no-channel".equals(source.channelFormat) ||
+                source.episodeContainer == null || source.episodeContainer.isBlank()) {
+            EpisodeLink selected = selectEpisodeFromGroup(document,
+                    source.episodeSelector, source.episodeLinkSelector,
+                    source.episodeNamePattern, wanted);
+            if (selected != null) {
+                raw.add(new EpisodeCandidate(source.name, "", selected.name,
+                        detailUrl, selected.url));
+            }
+            return raw;
+        }
+
+        Elements lists = document.select(source.episodeContainer);
+        Elements channelElements = source.channelSelector == null ||
+                source.channelSelector.isBlank()
+                ? new Elements() : document.select(source.channelSelector);
+        for (int index = 0; index < lists.size(); index++) {
+            String rawChannel = index < channelElements.size()
+                    ? channelElements.get(index).text().trim() : "线路" + (index + 1);
+            String channel = extractChannelName(rawChannel, source.channelNamePattern);
+            if (channel == null) continue;
+            if (channel.isBlank()) channel = "线路" + (index + 1);
+            EpisodeLink selected = selectEpisodeFromGroup(lists.get(index),
+                    source.episodeSelector, source.episodeLinkSelector,
+                    source.episodeNamePattern, wanted);
+            if (selected != null) {
+                raw.add(new EpisodeCandidate("", channel, selected.name,
+                        detailUrl, selected.url));
+            }
+        }
+
+        java.util.HashMap<String, Integer> duplicateCounts = new java.util.HashMap<>();
+        List<EpisodeCandidate> result = new ArrayList<>();
+        for (int index = 0; index < raw.size(); index++) {
+            EpisodeCandidate candidate = raw.get(index);
+            String baseKey = source.name + " · " + candidate.channel;
+            int occurrence = duplicateCounts.merge(baseKey, 1, Integer::sum);
+            String key = occurrence == 1 ? baseKey : baseKey + " " + occurrence;
+            result.add(new EpisodeCandidate(key, candidate.channel,
+                    candidate.episodeName, candidate.detailUrl, candidate.episodeUrl));
+        }
+        return result;
+    }
+
+    private EpisodeLink selectEpisodeFromGroup(
+            Element group,
+            String episodeSelector,
+            String episodeLinkSelector,
+            String episodeNamePattern,
+            int wanted
+    ) {
+        Elements episodes = group.select(episodeSelector);
+        Elements links = episodeLinkSelector == null || episodeLinkSelector.isBlank()
+                ? null : group.select(episodeLinkSelector);
+        for (int index = 0; index < episodes.size(); index++) {
+            Element episode = episodes.get(index);
+            Element link = links == null ? findLink(episode)
+                    : index < links.size() ? findLink(links.get(index)) : null;
+            String url = link == null ? "" : link.absUrl("href");
+            if (matchesEpisode(episode.text(), url, episodeNamePattern, wanted)) {
+                return url.isBlank() ? null : new EpisodeLink(episode.text(), url);
+            }
+        }
+        if (wanted <= episodes.size()) {
+            int index = wanted - 1;
+            Element episode = episodes.get(index);
+            Element link = links == null ? findLink(episode)
+                    : index < links.size() ? findLink(links.get(index)) : null;
+            String url = link == null ? "" : link.absUrl("href");
+            return url.isBlank() ? null : new EpisodeLink(episode.text(), url);
+        }
+        return null;
+    }
+
+    private Element findLink(Element element) {
+        if (element == null) return null;
+        if (element.hasAttr("href")) return element;
+        return element.selectFirst("a[href]");
+    }
+
+    private boolean matchesEpisode(
+            String name,
+            String url,
+            String configuredPattern,
+            int wanted
+    ) {
+        if (configuredPattern != null && !configuredPattern.isBlank()) {
+            try {
+                Matcher matcher = Pattern.compile(configuredPattern).matcher(name);
+                if (matcher.find()) {
+                    String value;
+                    try {
+                        value = matcher.group("ep");
+                    } catch (IllegalArgumentException ignored) {
+                        value = matcher.group();
+                    }
+                    Matcher number = Pattern.compile("\\d+(?:\\.\\d+)?").matcher(value);
+                    if (number.find() && Double.parseDouble(number.group()) == wanted) return true;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        Matcher nameMatcher = Pattern.compile("第\\s*(\\d+)\\s*[话集]").matcher(name);
+        if (nameMatcher.find() && Integer.parseInt(nameMatcher.group(1)) == wanted) return true;
+        Matcher urlMatcher = Pattern.compile("/nid/(\\d+)(?:\\.html|/|$)").matcher(url);
+        return urlMatcher.find() && Integer.parseInt(urlMatcher.group(1)) == wanted;
+    }
+
+    private String extractChannelName(String text, String configuredPattern) {
+        if (configuredPattern == null || configuredPattern.isBlank()) return text;
+        try {
+            Matcher matcher = Pattern.compile(configuredPattern).matcher(text);
+            if (!matcher.find()) return null;
+            try {
+                String group = matcher.group("ch");
+                return group == null ? text : group.trim();
+            } catch (IllegalArgumentException ignored) {
+                return text;
+            }
+        } catch (Exception ignored) {
+            return text;
+        }
+    }
+
     private String extractPlayerMediaUrl(String html) {
         Matcher matcher = PLAYER_DATA_PATTERN.matcher(html);
         if (!matcher.find()) return null;
@@ -763,9 +983,26 @@ public class MainActivity extends Activity {
             String subjectFormat,
             String subjectSelector,
             String subjectLinkSelector,
+            String channelFormat,
+            String channelSelector,
+            String channelNamePattern,
             String episodeContainer,
             String episodeSelector,
+            String episodeLinkSelector,
+            String episodeNamePattern,
             int tier
+    ) {
+    }
+
+    private record EpisodeLink(String name, String url) {
+    }
+
+    private record EpisodeCandidate(
+            String sourceKey,
+            String channel,
+            String episodeName,
+            String detailUrl,
+            String episodeUrl
     ) {
     }
 
@@ -778,7 +1015,19 @@ public class MainActivity extends Activity {
     }
 
     private record SourceAttempt(
-            String source, String siteUrl, ResolveResult result, String error) {
+            String source, String siteUrl, int resolvedCount, String error) {
+    }
+
+    private record ChannelAttempt(
+            EpisodeCandidate candidate, ResolveResult result, String error) {
+    }
+
+    private interface SourceProgress {
+        void onDiscovered(List<EpisodeCandidate> candidates);
+
+        void onReady(ResolveResult result);
+
+        void onFailed(EpisodeCandidate candidate, String error);
     }
 
     private void scheduleProbe(long delayMillis) {
@@ -1135,10 +1384,11 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
         probeGeneration++;
         handler.removeCallbacksAndMessages(null);
         if (!collectingSources) networkExecutor.shutdownNow();
-        httpClient.dispatcher().cancelAll();
+        if (!collectingSources) httpClient.dispatcher().cancelAll();
         if (webView != null) {
             webView.stopLoading();
             webView.destroy();

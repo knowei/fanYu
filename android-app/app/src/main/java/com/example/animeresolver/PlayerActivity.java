@@ -48,6 +48,7 @@ public class PlayerActivity extends Activity {
     public static final String SOURCE_LOADING = "loading";
     public static final String SOURCE_READY = "ready";
     public static final String SOURCE_FAILED = "failed";
+    public static final String SOURCE_REMOVED = "removed";
     private static final Map<Integer, LinkedHashMap<String, String>> SOURCE_CACHE =
             new HashMap<>();
     private static final Map<Integer, LinkedHashMap<String, SourceState>> SOURCE_STATE_CACHE =
@@ -68,6 +69,13 @@ public class PlayerActivity extends Activity {
 
     public static synchronized void cacheSourceState(
             int episode, String name, String status, String url, String error, String siteUrl) {
+        if (SOURCE_REMOVED.equals(status)) {
+            LinkedHashMap<String, SourceState> states = SOURCE_STATE_CACHE.get(episode);
+            if (states != null) states.remove(name);
+            LinkedHashMap<String, String> sources = SOURCE_CACHE.get(episode);
+            if (sources != null) sources.remove(name);
+            return;
+        }
         SourceState previous = SOURCE_STATE_CACHE
                 .getOrDefault(episode, new LinkedHashMap<>()).get(name);
         String resolvedSiteUrl = siteUrl == null || siteUrl.isBlank()
@@ -184,6 +192,13 @@ public class PlayerActivity extends Activity {
             String siteUrl = intent.getStringExtra("source_site_url");
             if (name == null || name.isBlank()) return;
             if (status == null || status.isBlank()) status = SOURCE_READY;
+            if (SOURCE_REMOVED.equals(status)) {
+                sourceStates.remove(name);
+                sources.remove(name);
+                updateSourceStatus();
+                renderSourcePicker();
+                return;
+            }
             SourceState previous = sourceStates.get(name);
             if ((siteUrl == null || siteUrl.isBlank()) && previous != null) {
                 siteUrl = previous.siteUrl;
@@ -230,7 +245,7 @@ public class PlayerActivity extends Activity {
         buildUi();
         registerReceiver(sourceReceiver, new IntentFilter(ACTION_SOURCE_RESULT), RECEIVER_NOT_EXPORTED);
         initializePlayer();
-        if (initialSourceName != null) sourceButton.setText(initialSourceName);
+        if (initialSourceName != null) sourceButton.setText(compactSourceName(initialSourceName));
         updateSourceStatus();
         progressHandler.post(progressUpdater);
         if (videoUrl == null || videoUrl.isBlank()) requestResolution(episode, false);
@@ -529,8 +544,8 @@ public class PlayerActivity extends Activity {
         player.prepare();
         player.setPlayWhenReady(true);
         if (previewImage != null) previewImage.setVisibility(View.GONE);
-        sourceButton.setText(sourceName);
-        dockSourceButton.setText(sourceName);
+        sourceButton.setText(compactSourceName(sourceName));
+        dockSourceButton.setText(compactSourceName(sourceName));
         updateSourceStatus();
         renderSourcePicker();
     }
@@ -642,6 +657,13 @@ public class PlayerActivity extends Activity {
         boolean current = name.equals(currentSourceName);
         boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
         boolean retryable = SOURCE_FAILED.equals(state.status) && !state.url.isBlank();
+        String siteName = name;
+        String channelName = "";
+        int separator = name.indexOf(" · ");
+        if (separator >= 0) {
+            siteName = name.substring(0, separator);
+            channelName = name.substring(separator + 3);
+        }
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(10), dp(12), dp(10));
@@ -665,7 +687,7 @@ public class PlayerActivity extends Activity {
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.setPadding(dp(12), 0, dp(8), 0);
-        TextView sourceName = text(name, 16, INK, true);
+        TextView sourceName = text(siteName, 16, INK, true);
         labels.addView(sourceName, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(28)));
         String detail;
@@ -687,6 +709,7 @@ public class PlayerActivity extends Activity {
             detail = "加载失败" + (state.error.isBlank() ? "" : " · " + compactError(state.error));
             detailColor = Color.rgb(190, 52, 60);
         }
+        if (!channelName.isBlank()) detail = channelName + " · " + detail;
         TextView detailView = text(detail, 13, detailColor, false);
         detailView.setMaxLines(1);
         detailView.setEllipsize(TextUtils.TruncateAt.END);
@@ -718,6 +741,12 @@ public class PlayerActivity extends Activity {
         params.setMargins(0, dp(5), 0, dp(5));
         row.setLayoutParams(params);
         return row;
+    }
+
+    private String compactSourceName(String name) {
+        if (name == null) return "视频源";
+        int separator = name.indexOf(" · ");
+        return separator >= 0 ? name.substring(separator + 3) : name;
     }
 
     private void openSourceSite(String siteUrl) {
