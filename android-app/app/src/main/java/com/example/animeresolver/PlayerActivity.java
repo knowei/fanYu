@@ -19,14 +19,18 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.Switch;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
@@ -41,8 +45,12 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayList;
 
 public class PlayerActivity extends Activity {
+    private static final int REQUEST_SITE_VERIFICATION = 401;
+    private static final int EPISODES_PER_RANGE = 12;
+    private static final int RANGES_PER_GROUP = 10;
     public static final String ACTION_SOURCE_RESULT =
             "com.example.animeresolver.SOURCE_RESULT";
     public static final String SOURCE_LOADING = "loading";
@@ -119,9 +127,16 @@ public class PlayerActivity extends Activity {
     private int bangumiId;
     private int availableEpisodes;
     private TextView currentEpisodeView;
+    private TextView currentEpisodeNameView;
     private TextView sourceStatusView;
     private Button sourceButton;
     private LinearLayout episodeRow;
+    private LinearLayout episodeRangeRow;
+    private LinearLayout episodeGroupRow;
+    private HorizontalScrollView episodeRangeScroll;
+    private HorizontalScrollView episodeGroupScroll;
+    private int selectedEpisodeRange;
+    private ArrayList<String> episodeTitles = new ArrayList<>();
     private String initialSourceName;
     private ImageView previewImage;
     private MaterialButton playPauseButton;
@@ -135,10 +150,17 @@ public class PlayerActivity extends Activity {
     private TextView playbackTimeView;
     private Button dockSourceButton;
     private String currentSourceName = "";
+    private long resumePosition;
     private BottomSheetDialog sourceDialog;
     private LinearLayout sourceListContainer;
     private TextView sourceSummaryView;
     private ScrollView sourceScrollView;
+    private LinearLayout episodePanel;
+    private LinearLayout discussionPanel;
+    private Button episodesTabButton;
+    private Button discussionTabButton;
+    private LinearLayout discussionList;
+    private EditText discussionInput;
     private boolean fullscreen;
     private final Runnable hideControls = () -> {
         if (player != null && player.isPlaying() && controlDock != null) controlDock.setVisibility(View.GONE);
@@ -229,7 +251,11 @@ public class PlayerActivity extends Activity {
         episode = Math.max(1, getIntent().getIntExtra("episode", 1));
         bangumiId = getIntent().getIntExtra("bangumi_id", 0);
         availableEpisodes = Math.max(1, getIntent().getIntExtra("available_episodes", 12));
+        ArrayList<String> incomingTitles = getIntent().getStringArrayListExtra("episode_titles");
+        if (incomingTitles != null) episodeTitles = incomingTitles;
+        selectedEpisodeRange = (episode - 1) / EPISODES_PER_RANGE;
         initialSourceName = getIntent().getStringExtra("source_name");
+        resumePosition = Math.max(0L, getIntent().getLongExtra("resume_position", 0L));
         sourceStates.putAll(cachedSourceStates(episode));
         sources.putAll(cachedSources(episode));
         if (initialSourceName != null && videoUrl != null) {
@@ -254,7 +280,9 @@ public class PlayerActivity extends Activity {
                 .putString("cover", subjectCover)
                 .putInt("episode", episode)
                 .putString("videoUrl", videoUrl == null ? "" : videoUrl)
+                .putInt("bangumiId", bangumiId)
                 .apply();
+        saveWatchHistory();
     }
 
     private TextView text(String value, float size, int color, boolean bold) {
@@ -332,36 +360,53 @@ public class PlayerActivity extends Activity {
         sourceButton.setOnClickListener(v -> showSourcePicker());
         episodeTitle.addView(sourceButton, new LinearLayout.LayoutParams(dp(110), dp(48)));
         content.addView(episodeTitle);
+        currentEpisodeNameView = text("", 14, MUTED, false);
+        currentEpisodeNameView.setMaxLines(1);
+        currentEpisodeNameView.setEllipsize(TextUtils.TruncateAt.END);
+        content.addView(currentEpisodeNameView);
+        updateCurrentEpisodeLabels();
         sourceStatusView = text("正在继续加载其它视频源…", 14, MUTED, false);
         content.addView(sourceStatusView);
         content.addView(divider(), margins(0, 20, 18));
 
-        content.addView(text("选集", 21, INK, true));
+        addContentTabs(content);
+        episodePanel = new LinearLayout(this);
+        episodePanel.setOrientation(LinearLayout.VERTICAL);
+        content.addView(episodePanel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        episodePanel.addView(text("选集", 21, INK, true));
+        if (availableEpisodes > EPISODES_PER_RANGE * RANGES_PER_GROUP) {
+            episodeGroupScroll = new HorizontalScrollView(this);
+            episodeGroupScroll.setHorizontalScrollBarEnabled(false);
+            episodeGroupRow = new LinearLayout(this);
+            episodeGroupRow.setPadding(0, dp(10), 0, 0);
+            episodeGroupScroll.addView(episodeGroupRow);
+            episodePanel.addView(episodeGroupScroll, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        }
+        if (availableEpisodes > EPISODES_PER_RANGE) {
+            episodeRangeScroll = new HorizontalScrollView(this);
+            episodeRangeScroll.setHorizontalScrollBarEnabled(false);
+            episodeRangeRow = new LinearLayout(this);
+            episodeRangeRow.setPadding(0, dp(10), 0, 0);
+            episodeRangeScroll.addView(episodeRangeRow);
+            episodePanel.addView(episodeRangeScroll, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        }
         HorizontalScrollView episodeScroll = new HorizontalScrollView(this);
         episodeScroll.setHorizontalScrollBarEnabled(false);
         episodeRow = new LinearLayout(this);
         episodeRow.setPadding(0, dp(12), 0, dp(12));
-        for (int value = 1; value <= availableEpisodes; value++) {
-            Button button = new Button(this);
-            button.setText(String.valueOf(value));
-            button.setTextSize(16);
-            button.setAllCaps(false);
-            button.setTextColor(value == episode ? Color.WHITE : INK);
-            button.setBackground(rounded(value == episode ? BLUE : Color.TRANSPARENT,
-                    9, value == episode ? BLUE : LINE, 1));
-            int targetEpisode = value;
-            button.setOnClickListener(v -> resolveEpisode(targetEpisode));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(58), dp(58));
-            params.setMargins(0, 0, dp(10), 0);
-            episodeRow.addView(button, params);
-        }
         episodeScroll.addView(episodeRow);
-        content.addView(episodeScroll);
-        content.addView(divider(), margins(0, 8, 18));
+        episodePanel.addView(episodeScroll);
+        renderEpisodeSelector();
 
-        content.addView(text("播放设置", 21, INK, true));
-        content.addView(settingSwitch("自动播放下一集", true));
-        content.addView(settingSwitch("跳过片头片尾", false));
+        discussionPanel = new LinearLayout(this);
+        discussionPanel.setOrientation(LinearLayout.VERTICAL);
+        discussionPanel.setVisibility(View.GONE);
+        content.addView(discussionPanel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        addDiscussionSection(discussionPanel);
         content.addView(divider(), margins(0, 18, 12));
         LinearLayout notice = new LinearLayout(this);
         notice.setGravity(Gravity.CENTER_VERTICAL);
@@ -375,6 +420,53 @@ public class PlayerActivity extends Activity {
         rootView.addView(pageScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(rootView);
+    }
+
+    private void addContentTabs(LinearLayout content) {
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setGravity(Gravity.CENTER_VERTICAL);
+        tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
+        tabs.setBackground(rounded(Color.rgb(242, 245, 250), 14, Color.TRANSPARENT, 0));
+        episodesTabButton = contentTabButton("选集", true);
+        episodesTabButton.setOnClickListener(v -> selectContentTab(true));
+        discussionTabButton = contentTabButton("讨论", false);
+        discussionTabButton.setOnClickListener(v -> selectContentTab(false));
+        tabs.addView(episodesTabButton, new LinearLayout.LayoutParams(0, dp(38), 1));
+        tabs.addView(discussionTabButton, new LinearLayout.LayoutParams(0, dp(38), 1));
+        LinearLayout.LayoutParams tabParams = new LinearLayout.LayoutParams(-1, dp(46));
+        tabParams.setMargins(0, 0, 0, dp(18));
+        content.addView(tabs, tabParams);
+    }
+
+    private Button contentTabButton(String label, boolean selected) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(14);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumWidth(0);
+        button.setMinimumHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        updateContentTabStyle(button, selected);
+        return button;
+    }
+
+    private void selectContentTab(boolean episodes) {
+        if (episodePanel == null || discussionPanel == null) return;
+        episodePanel.setVisibility(episodes ? View.VISIBLE : View.GONE);
+        discussionPanel.setVisibility(episodes ? View.GONE : View.VISIBLE);
+        updateContentTabStyle(episodesTabButton, episodes);
+        updateContentTabStyle(discussionTabButton, !episodes);
+        if (!episodes) renderDiscussions();
+    }
+
+    private void updateContentTabStyle(Button button, boolean selected) {
+        if (button == null) return;
+        button.setTextColor(selected ? INK : MUTED);
+        button.setBackground(rounded(selected ? Color.WHITE : Color.TRANSPARENT,
+                10, Color.TRANSPARENT, 0));
     }
 
     private void addPlayerControls() {
@@ -487,16 +579,121 @@ public class PlayerActivity extends Activity {
         return button;
     }
 
-    private View settingSwitch(String label, boolean checked) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text(label, 16, INK, false);
-        row.addView(title, new LinearLayout.LayoutParams(0, dp(62), 1));
-        Switch toggle = new Switch(this);
-        toggle.setChecked(checked);
-        toggle.setButtonTintList(ColorStateList.valueOf(BLUE));
-        row.addView(toggle, new LinearLayout.LayoutParams(dp(64), dp(62)));
-        return row;
+    private void addDiscussionSection(LinearLayout content) {
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleRow.addView(text("本集讨论", 21, INK, true), new LinearLayout.LayoutParams(0, dp(42), 1));
+        TextView local = text("仅保存在本机", 12, MUTED, false);
+        local.setGravity(Gravity.CENTER);
+        local.setPadding(dp(9), 0, dp(9), 0);
+        local.setBackground(rounded(Color.rgb(242, 245, 250), 10, Color.TRANSPARENT, 0));
+        titleRow.addView(local, new LinearLayout.LayoutParams(-2, dp(24)));
+        content.addView(titleRow);
+
+        TextView hint = text("写下这一集的想法吧，长按自己的留言可以删除。", 13, MUTED, false);
+        content.addView(hint, new LinearLayout.LayoutParams(-1, dp(28)));
+        LinearLayout composer = new LinearLayout(this);
+        composer.setGravity(Gravity.CENTER_VERTICAL);
+        composer.setPadding(dp(12), 0, dp(5), 0);
+        composer.setBackground(rounded(Color.rgb(244, 247, 252), 14, Color.TRANSPARENT, 0));
+        discussionInput = new EditText(this);
+        discussionInput.setSingleLine(true);
+        discussionInput.setTextSize(14);
+        discussionInput.setTextColor(INK);
+        discussionInput.setHintTextColor(Color.rgb(145, 150, 160));
+        discussionInput.setHint("说点什么…");
+        discussionInput.setBackgroundColor(Color.TRANSPARENT);
+        composer.addView(discussionInput, new LinearLayout.LayoutParams(0, dp(46), 1));
+        Button send = new Button(this);
+        send.setText("发布");
+        send.setTextSize(13);
+        send.setTextColor(Color.WHITE);
+        send.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        send.setAllCaps(false);
+        send.setMinWidth(0);
+        send.setMinHeight(0);
+        send.setMinimumWidth(0);
+        send.setMinimumHeight(0);
+        send.setPadding(dp(12), 0, dp(12), 0);
+        send.setBackground(rounded(BLUE, 10, Color.TRANSPARENT, 0));
+        send.setOnClickListener(v -> publishDiscussion());
+        composer.addView(send, new LinearLayout.LayoutParams(dp(66), dp(34)));
+        content.addView(composer, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        discussionList = new LinearLayout(this);
+        discussionList.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams discussionParams = new LinearLayout.LayoutParams(-1, -2);
+        discussionParams.setMargins(0, dp(10), 0, 0);
+        content.addView(discussionList, discussionParams);
+        renderDiscussions();
+    }
+
+    private void publishDiscussion() {
+        String value = discussionInput == null ? "" : discussionInput.getText().toString().trim();
+        if (value.isBlank()) return;
+        if (value.length() > 120) {
+            Toast.makeText(this, "留言请控制在 120 字以内", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        DiscussionStore.add(this, bangumiId, subjectName, episode, value);
+        discussionInput.setText("");
+        renderDiscussions();
+    }
+
+    private void renderDiscussions() {
+        if (discussionList == null) return;
+        discussionList.removeAllViews();
+        JSONArray items = DiscussionStore.read(this, bangumiId, subjectName, episode);
+        if (items.length() == 0) {
+            TextView empty = text("还没有留言，来当第一个发言的人吧。", 13, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setBackground(rounded(Color.rgb(248, 249, 252), 12, Color.TRANSPARENT, 0));
+            discussionList.addView(empty, new LinearLayout.LayoutParams(-1, dp(62)));
+            return;
+        }
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null) discussionList.addView(discussionRow(item), rowMargins(8));
+        }
+    }
+
+    private View discussionRow(JSONObject item) {
+        long id = item.optLong("id");
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(rounded(Color.rgb(248, 249, 252), 12, Color.TRANSPARENT, 0));
+        LinearLayout meta = new LinearLayout(this);
+        meta.setGravity(Gravity.CENTER_VERTICAL);
+        meta.addView(text("我", 13, BLUE, true), new LinearLayout.LayoutParams(0, dp(20), 1));
+        TextView time = text(relativeTime(item.optLong("createdAt")), 12, MUTED, false);
+        time.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        meta.addView(time, new LinearLayout.LayoutParams(dp(72), dp(20)));
+        card.addView(meta);
+        TextView body = text(item.optString("content"), 14, INK, false);
+        body.setLineSpacing(dp(2), 1f);
+        card.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        card.setOnLongClickListener(v -> {
+            DiscussionStore.remove(this, id);
+            renderDiscussions();
+            Toast.makeText(this, "留言已删除", Toast.LENGTH_SHORT).show();
+            return true;
+        });
+        return card;
+    }
+
+    private LinearLayout.LayoutParams rowMargins(int top) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, dp(top), 0, 0);
+        return params;
+    }
+
+    private String relativeTime(long time) {
+        long seconds = Math.max(0, (System.currentTimeMillis() - time) / 1000);
+        if (seconds < 60) return "刚刚";
+        if (seconds < 3600) return (seconds / 60) + " 分钟前";
+        if (seconds < 86400) return (seconds / 3600) + " 小时前";
+        return (seconds / 86400) + " 天前";
     }
 
     private GradientDrawable rounded(int color, int radius, int stroke, int width) {
@@ -525,6 +722,7 @@ public class PlayerActivity extends Activity {
         player = createPlayer();
         playerView.setPlayer(player);
         player.setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)));
+        if (resumePosition > 0) player.seekTo(resumePosition);
         player.prepare();
         player.setPlayWhenReady(true);
         showControlsTemporarily();
@@ -541,6 +739,10 @@ public class PlayerActivity extends Activity {
             playerView.setPlayer(player);
         }
         player.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+        if (resumePosition > 0) {
+            player.seekTo(resumePosition);
+            resumePosition = 0L;
+        }
         player.prepare();
         player.setPlayWhenReady(true);
         if (previewImage != null) previewImage.setVisibility(View.GONE);
@@ -717,7 +919,10 @@ public class PlayerActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
         row.addView(labels, new LinearLayout.LayoutParams(0, dp(52), 1));
 
-        String actionText = retryable ? "重试" : current ? "使用中" : ready ? "切换" : "";
+        boolean needsVerification = SOURCE_FAILED.equals(state.status)
+                && state.error.contains("验证") && !state.siteUrl.isBlank();
+        String actionText = needsVerification ? "去验证"
+                : retryable ? "重试" : current ? "使用中" : ready ? "切换" : "";
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
         actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
@@ -725,10 +930,14 @@ public class PlayerActivity extends Activity {
                 current || ready || retryable ? BLUE : MUTED, current && !retryable);
         action.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         actions.addView(action, new LinearLayout.LayoutParams(dp(76), dp(28)));
-        TextView visit = text(state.siteUrl.isBlank() ? "" : "访问网站", 12, BLUE, false);
+        TextView visit = text(state.siteUrl.isBlank() ? "" :
+                needsVerification ? "应用内验证" : "访问网站", 12, BLUE, false);
         visit.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         if (!state.siteUrl.isBlank()) {
-            visit.setOnClickListener(v -> openSourceSite(state.siteUrl));
+            visit.setOnClickListener(v -> {
+                if (needsVerification) openVerificationSite(state.siteUrl);
+                else openSourceSite(state.siteUrl);
+            });
         }
         actions.addView(visit, new LinearLayout.LayoutParams(dp(76), dp(24)));
         row.addView(actions, new LinearLayout.LayoutParams(dp(76), dp(52)));
@@ -741,6 +950,21 @@ public class PlayerActivity extends Activity {
         params.setMargins(0, dp(5), 0, dp(5));
         row.setLayoutParams(params);
         return row;
+    }
+
+    private void openVerificationSite(String siteUrl) {
+        Intent intent = new Intent(this, SiteVerificationActivity.class);
+        intent.putExtra("verification_url", siteUrl);
+        startActivityForResult(intent, REQUEST_SITE_VERIFICATION);
+    }
+
+    @Override
+    @Deprecated
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SITE_VERIFICATION && resultCode == RESULT_OK) {
+            requestResolution(episode, false);
+        }
     }
 
     private String compactSourceName(String name) {
@@ -783,23 +1007,20 @@ public class PlayerActivity extends Activity {
     }
 
     private void requestResolution(int targetEpisode, boolean changingEpisode) {
+        saveWatchHistory();
         episode = targetEpisode;
+        videoUrl = "";
+        resumePosition = 0L;
         sources.clear();
         sourceStates.clear();
         currentSourceName = "";
         clearCachedSources(episode);
-        currentEpisodeView.setText("第" + episode + "集");
+        selectedEpisodeRange = (episode - 1) / EPISODES_PER_RANGE;
+        updateCurrentEpisodeLabels();
+        renderDiscussions();
         sourceButton.setText("视频源");
         sourceStatusView.setText("正在并发解析第 " + episode + " 集…");
-        for (int index = 0; index < episodeRow.getChildCount(); index++) {
-            View child = episodeRow.getChildAt(index);
-            if (child instanceof Button button) {
-                int value = Integer.parseInt(button.getText().toString());
-                button.setTextColor(value == episode ? Color.WHITE : INK);
-                button.setBackground(rounded(value == episode ? BLUE : Color.TRANSPARENT,
-                        9, value == episode ? BLUE : LINE, 1));
-            }
-        }
+        renderEpisodeSelector();
         if (player != null) player.stop();
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("subject_name", subjectName);
@@ -809,19 +1030,159 @@ public class PlayerActivity extends Activity {
         intent.putExtra("auto_resolve", true);
         intent.putExtra("return_to_player", true);
         intent.putExtra("available_episodes", availableEpisodes);
+        intent.putStringArrayListExtra("episode_titles", new ArrayList<>(episodeTitles));
         intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
         startActivity(intent);
         overridePendingTransition(0, 0);
     }
 
+    private void renderEpisodeSelector() {
+        renderEpisodeGroups();
+        renderEpisodeRanges();
+        if (episodeRow == null) return;
+        episodeRow.removeAllViews();
+        int first = selectedEpisodeRange * EPISODES_PER_RANGE + 1;
+        int last = Math.min(availableEpisodes, first + EPISODES_PER_RANGE - 1);
+        for (int value = first; value <= last; value++) {
+            Button button = new Button(this);
+            String title = episodeTitle(value);
+            button.setText(title.isBlank() ? String.valueOf(value) : value + "\n" + title);
+            button.setTextSize(title.isBlank() ? 16 : 12);
+            button.setAllCaps(false);
+            button.setMaxLines(2);
+            button.setEllipsize(TextUtils.TruncateAt.END);
+            button.setGravity(Gravity.CENTER);
+            button.setMinWidth(0);
+            button.setMinimumWidth(0);
+            button.setStateListAnimator(null);
+            button.setTextColor(value == episode ? Color.WHITE : INK);
+            button.setBackground(rounded(value == episode ? BLUE : Color.TRANSPARENT,
+                    9, value == episode ? BLUE : LINE, 1));
+            int targetEpisode = value;
+            button.setOnClickListener(v -> resolveEpisode(targetEpisode));
+            int width = title.isBlank() ? dp(58) : dp(116);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(62));
+            params.setMargins(0, 0, dp(10), 0);
+            episodeRow.addView(button, params);
+        }
+    }
+
+    private void renderEpisodeRanges() {
+        if (episodeRangeRow == null) return;
+        episodeRangeRow.removeAllViews();
+        int ranges = (availableEpisodes + EPISODES_PER_RANGE - 1) / EPISODES_PER_RANGE;
+        int group = selectedEpisodeRange / RANGES_PER_GROUP;
+        int firstRange = group * RANGES_PER_GROUP;
+        int lastRange = Math.min(ranges, firstRange + RANGES_PER_GROUP);
+        for (int range = firstRange; range < lastRange; range++) {
+            int first = range * EPISODES_PER_RANGE + 1;
+            int last = Math.min(availableEpisodes, first + EPISODES_PER_RANGE - 1);
+            Button button = new Button(this);
+            button.setText(first + "–" + last);
+            button.setTextSize(13);
+            button.setAllCaps(false);
+            button.setMinWidth(0);
+            button.setMinimumWidth(0);
+            button.setMinHeight(0);
+            button.setMinimumHeight(0);
+            button.setPadding(dp(14), 0, dp(14), 0);
+            button.setStateListAnimator(null);
+            boolean selected = range == selectedEpisodeRange;
+            button.setTextColor(selected ? Color.WHITE : MUTED);
+            button.setBackground(rounded(selected ? BLUE : Color.TRANSPARENT,
+                    18, selected ? BLUE : LINE, 1));
+            int targetRange = range;
+            button.setOnClickListener(v -> {
+                selectedEpisodeRange = targetRange;
+                renderEpisodeSelector();
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+            params.setMargins(0, 0, dp(8), 0);
+            episodeRangeRow.addView(button, params);
+        }
+        scrollToSelected(episodeRangeScroll, episodeRangeRow,
+                selectedEpisodeRange - firstRange);
+    }
+
+    private void renderEpisodeGroups() {
+        if (episodeGroupRow == null) return;
+        episodeGroupRow.removeAllViews();
+        int groupSize = EPISODES_PER_RANGE * RANGES_PER_GROUP;
+        int groups = (availableEpisodes + groupSize - 1) / groupSize;
+        int selectedGroup = selectedEpisodeRange / RANGES_PER_GROUP;
+        for (int group = 0; group < groups; group++) {
+            int first = group * groupSize + 1;
+            int last = Math.min(availableEpisodes, first + groupSize - 1);
+            Button button = new Button(this);
+            button.setText(first + "–" + last + " 集");
+            button.setTextSize(13);
+            button.setAllCaps(false);
+            button.setMinWidth(0);
+            button.setMinimumWidth(0);
+            button.setMinHeight(0);
+            button.setMinimumHeight(0);
+            button.setPadding(dp(14), 0, dp(14), 0);
+            button.setStateListAnimator(null);
+            boolean selected = group == selectedGroup;
+            button.setTextColor(selected ? BLUE : MUTED);
+            button.setBackground(rounded(Color.TRANSPARENT, 18,
+                    selected ? BLUE : LINE, 1));
+            int targetGroup = group;
+            button.setOnClickListener(v -> {
+                selectedEpisodeRange = targetGroup * RANGES_PER_GROUP;
+                renderEpisodeSelector();
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
+            params.setMargins(0, 0, dp(8), 0);
+            episodeGroupRow.addView(button, params);
+        }
+        scrollToSelected(episodeGroupScroll, episodeGroupRow, selectedGroup);
+    }
+
+    private void scrollToSelected(HorizontalScrollView scroll, LinearLayout row, int index) {
+        if (scroll == null || row == null || index < 0) return;
+        scroll.post(() -> {
+            if (index < row.getChildCount()) {
+                View child = row.getChildAt(index);
+                scroll.smoothScrollTo(Math.max(0, child.getLeft() - dp(12)), 0);
+            }
+        });
+    }
+
+    private void updateCurrentEpisodeLabels() {
+        if (currentEpisodeView != null) currentEpisodeView.setText("第" + episode + "集");
+        if (currentEpisodeNameView == null) return;
+        String title = episodeTitle(episode);
+        currentEpisodeNameView.setText(title);
+        currentEpisodeNameView.setVisibility(title.isBlank() ? View.GONE : View.VISIBLE);
+    }
+
+    private String episodeTitle(int episodeNumber) {
+        int index = episodeNumber - 1;
+        return index >= 0 && index < episodeTitles.size() ? episodeTitles.get(index) : "";
+    }
+
     @Override
     protected void onStop() {
         super.onStop();
-        if (player != null) player.pause();
+        if (player != null) {
+            saveWatchHistory();
+            player.pause();
+        }
+    }
+
+    private void saveWatchHistory() {
+        long position = player == null ? resumePosition : Math.max(0L, player.getCurrentPosition());
+        long duration = player == null ? 0L : Math.max(0L, player.getDuration());
+        WatchHistoryStore.record(this, subjectName, subjectCover, episode,
+                videoUrl, bangumiId, position, duration);
     }
 
     @Override
     protected void onDestroy() {
+        saveWatchHistory();
         progressHandler.removeCallbacks(progressUpdater);
         progressHandler.removeCallbacks(hideControls);
         unregisterReceiver(sourceReceiver);

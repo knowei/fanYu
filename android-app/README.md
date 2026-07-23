@@ -10,10 +10,18 @@
 
 WebView 会保存站点 Cookie。只有自动安全验证超过 12 秒仍未完成时，才显示验证页面。
 
-构建：
+构建调试包：
 
 ```powershell
 $env:JAVA_HOME='D:\environ\Java\jdk-17'
 $env:ANDROID_HOME='D:\environ\androidsdk'
-gradle :app:assembleDebug
+.\package-app.ps1 -BuildType debug
 ```
+
+打包签名正式版（默认）：
+
+```powershell
+.\package-app.ps1
+```
+
+脚本会读取 `app/build.gradle.kts` 中的版本号，并将 APK 复制到 `releases` 目录，同时输出 SHA256。

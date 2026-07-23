@@ -344,6 +344,7 @@ public class MainActivity extends Activity {
             try {
                 HttpPage subscription = getPage(SUBSCRIPTION_URL);
                 List<SourceConfig> sources = parseSourceConfigs(subscription.html);
+                addLocalSources(sources);
                 if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
 
                 java.util.LinkedHashMap<String, String> sourceSearchUrls =
@@ -536,6 +537,28 @@ public class MainActivity extends Activity {
         }
         result.sort(Comparator.comparingInt(source -> source.tier));
         return result;
+    }
+
+    private void addLocalSources(List<SourceConfig> sources) {
+        boolean present = sources.stream().anyMatch(source ->
+                source.name.equals("橘子动漫") || source.searchUrl.contains("mgnacg.com"));
+        if (present) return;
+        sources.add(new SourceConfig(
+                "橘子动漫",
+                "https://www.mgnacg.com/search/-------------/?wd={keyword}",
+                "indexed",
+                ".search-box .thumb-content > .thumb-txt",
+                ".search-box .thumb-menu > a",
+                "index-grouped",
+                ".anthology-tab > .swiper-wrapper a",
+                "^(?<ch>.+?)(\\d+)?$",
+                ".anthology-list-box",
+                "a",
+                "",
+                "第\\s*(?<ep>.+)\\s*[话集]",
+                8
+        ));
+        sources.sort(Comparator.comparingInt(source -> source.tier));
     }
 
     private int resolveSource(
@@ -951,7 +974,13 @@ public class MainActivity extends Activity {
                 lower.contains("cdn-cgi/challenge") ||
                 lower.contains("turnstile") ||
                 lower.contains("just a moment") ||
-                lower.contains("安全验证");
+                lower.contains("安全验证") ||
+                // Streamlab/MacCMS sites can show a first-party image captcha
+                // inside an otherwise normal search response.
+                lower.contains("请输入验证码") ||
+                lower.contains("verify-submit") ||
+                lower.contains("ds-verify") ||
+                lower.contains("/verify/index.html");
     }
 
     private void fallbackToWebView(
@@ -1245,6 +1274,8 @@ public class MainActivity extends Activity {
         playerIntent.putExtra("bangumi_id", getIntent().getIntExtra("bangumi_id", 0));
         playerIntent.putExtra("available_episodes",
                 getIntent().getIntExtra("available_episodes", 12));
+        playerIntent.putStringArrayListExtra("episode_titles",
+                getIntent().getStringArrayListExtra("episode_titles"));
         playerIntent.putExtra("source_name", resolvedSource);
         startActivity(playerIntent);
         finish();
@@ -1333,33 +1364,11 @@ public class MainActivity extends Activity {
     private void toggleFavorite() {
         String name = nameInput.getText().toString().trim();
         if (name.isEmpty()) return;
-        android.content.SharedPreferences preferences =
-                getSharedPreferences("watching", MODE_PRIVATE);
-        try {
-            org.json.JSONArray old = new org.json.JSONArray(
-                    preferences.getString("favorites", "[]"));
-            org.json.JSONArray updated = new org.json.JSONArray();
-            boolean removed = false;
-            for (int index = 0; index < old.length(); index++) {
-                JSONObject item = old.optJSONObject(index);
-                if (item != null && name.equals(item.optString("name"))) {
-                    removed = true;
-                } else if (item != null) {
-                    updated.put(item);
-                }
-            }
-            if (!removed) {
-                JSONObject item = new JSONObject();
-                item.put("name", name);
-                item.put("cover", subjectCover);
-                updated.put(item);
-            }
-            preferences.edit().putString("favorites", updated.toString()).apply();
-            favoriteButton.setText(removed ? "收藏这部番剧" : "已收藏，点击取消");
-            Toast.makeText(this, removed ? "已取消收藏" : "已加入收藏", Toast.LENGTH_SHORT).show();
-        } catch (JSONException exception) {
-            Toast.makeText(this, "收藏失败", Toast.LENGTH_SHORT).show();
-        }
+        int subjectId = getIntent().getIntExtra("bangumi_id", 0);
+        boolean favorite = FavoriteStore.toggle(this, subjectId, name, subjectCover);
+        favoriteButton.setText(favorite ? "已收藏，点击取消" : "收藏这部番剧");
+        Toast.makeText(this, favorite ? "已加入收藏" : "已取消收藏",
+                Toast.LENGTH_SHORT).show();
     }
 
     private void setStatus(String message) {

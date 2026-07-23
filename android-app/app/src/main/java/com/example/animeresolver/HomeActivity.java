@@ -207,17 +207,73 @@ public class HomeActivity extends Activity {
         page.addView(buildDateRail(today, date -> {
             broadcastTitle.setText(date.equals(today) ? "今日放送"
                     : date.getMonthValue() + "月" + date.getDayOfMonth() + "日放送");
-            list.removeAllViews();
-            list.addView(new ProgressBar(this), new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+            showBroadcastLoading(list, date.equals(today) ? "正在同步今日放送…"
+                    : "正在读取" + shortWeekday(date) + "的放送安排…");
             fetchCalendar(list, date, date.equals(today) ? "今日" : shortWeekday(date));
         }), matchWrap(dp(76), 0, 0, 18));
         page.addView(titleRow);
-        ProgressBar progress = new ProgressBar(this);
-        list.addView(progress, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        showBroadcastLoading(list, "正在同步今日放送…");
         page.addView(list);
         fetchCalendar(list, today, "今日");
+    }
+
+    private void showBroadcastLoading(LinearLayout target, String message) {
+        target.removeAllViews();
+        LinearLayout status = new LinearLayout(this);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        status.setPadding(0, dp(4), 0, dp(8));
+        ProgressBar spinner = new ProgressBar(this);
+        spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(BLUE));
+        status.addView(spinner, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        TextView label = label(message, 13, MUTED, false);
+        label.setPadding(dp(10), 0, 0, 0);
+        status.addView(label, new LinearLayout.LayoutParams(0, dp(32), 1));
+        target.addView(status);
+        for (int index = 0; index < 3; index++) {
+            target.addView(broadcastSkeletonRow());
+        }
+    }
+
+    private View broadcastSkeletonRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(12), 0, dp(12));
+        LinearLayout markerColumn = new LinearLayout(this);
+        markerColumn.setGravity(Gravity.CENTER);
+        markerColumn.addView(skeletonBlock(dp(40), dp(20), 8),
+                skeletonParams(dp(40), dp(20), 0, 0, 0));
+        row.addView(markerColumn, new LinearLayout.LayoutParams(dp(48), dp(130)));
+        View cover = skeletonBlock(dp(88), dp(126), 8);
+        row.addView(cover, new LinearLayout.LayoutParams(dp(88), dp(126)));
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.CENTER_VERTICAL);
+        info.setPadding(dp(16), 0, 0, 0);
+        info.addView(skeletonBlock(0, dp(18), 8), skeletonParams(0, dp(18), 0, 0, 0, 1));
+        info.addView(skeletonBlock(dp(150), dp(14), 7),
+                skeletonParams(dp(150), dp(14), 0, 12, 0));
+        info.addView(skeletonBlock(dp(110), dp(14), 7),
+                skeletonParams(dp(110), dp(14), 0, 10, 0));
+        row.addView(info, new LinearLayout.LayoutParams(0, dp(126), 1));
+        return row;
+    }
+
+    private View skeletonBlock(int width, int height, int radius) {
+        View block = new View(this);
+        block.setBackground(roundedRect(Color.rgb(237, 240, 245), radius));
+        return block;
+    }
+
+    private LinearLayout.LayoutParams skeletonParams(
+            int width, int height, int left, int top, int bottom) {
+        return skeletonParams(width, height, left, top, bottom, 0);
+    }
+
+    private LinearLayout.LayoutParams skeletonParams(
+            int width, int height, int left, int top, int bottom, float weight) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, height, weight);
+        params.setMargins(dp(left), dp(top), 0, dp(bottom));
+        return params;
     }
 
     private String weekdayGreeting(LocalDate date) {
@@ -557,9 +613,17 @@ public class HomeActivity extends Activity {
         header.addView(settings, new LinearLayout.LayoutParams(dp(54), dp(48)));
         page.addView(header, matchWrap(dp(48), 0, 0, 22));
         android.content.SharedPreferences prefs = getSharedPreferences("watching", MODE_PRIVATE);
-        String lastName = prefs.getString("name", "");
-        String lastCover = prefs.getString("cover", "");
-        int lastEpisode = prefs.getInt("episode", 1);
+        JSONArray history = WatchHistoryStore.read(this);
+        JSONObject latest = history.optJSONObject(0);
+        String lastName = latest == null ? prefs.getString("name", "") : latest.optString("name");
+        String lastCover = latest == null ? prefs.getString("cover", "") : latest.optString("cover");
+        int lastEpisode = latest == null ? prefs.getInt("episode", 1) : latest.optInt("episode", 1);
+        long lastPosition = latest == null ? 0L : latest.optLong("position", 0L);
+        long lastDuration = latest == null ? 0L : latest.optLong("duration", 0L);
+        String lastVideoUrl = latest == null ? prefs.getString("videoUrl", "")
+                : latest.optString("videoUrl");
+        int lastBangumiId = latest == null ? prefs.getInt("bangumiId", 0)
+                : latest.optInt("bangumiId", 0);
 
         page.addView(mySectionTitle("继续观看", ""));
         if (lastName.isEmpty()) {
@@ -568,66 +632,70 @@ public class HomeActivity extends Activity {
             empty.setBackground(roundedRect(Color.rgb(245, 248, 253), 12));
             page.addView(empty, matchWrap(dp(86), 0, 10, 28));
         } else {
-            page.addView(recentRow(lastName, lastCover, lastEpisode), matchWrap(dp(158), 0, 10, 30));
+            page.addView(recentRow(lastName, lastCover, lastEpisode,
+                    lastPosition, lastDuration, lastVideoUrl, lastBangumiId),
+                    matchWrap(dp(124), 0, 10, 26));
         }
 
-        String favoritesJson = prefs.getString("favorites", "[]");
         try {
-            JSONArray favorites = new JSONArray(favoritesJson);
+            JSONArray favorites = FavoriteStore.read(this);
             page.addView(mySectionTitle("收藏", favorites.length() == 0 ? "" : favorites.length() + " 部"));
             if (favorites.length() == 0) {
                 TextView emptyFavorites = label("收藏的番剧会在这里组成片单", 14, MUTED, false);
                 emptyFavorites.setGravity(Gravity.CENTER_VERTICAL);
                 page.addView(emptyFavorites, matchWrap(dp(70), 0, 8, 22));
             } else {
-                page.addView(favoritesRow(favorites), matchWrap(dp(184), 0, 12, 30));
+                page.addView(favoritesRow(favorites), matchWrap(dp(160), 0, 10, 26));
             }
         } catch (Exception ignored) {
         }
         page.addView(mySectionTitle("更多", ""), matchWrap(0, 0, 0, 4));
-        page.addView(settingsRow("播放记录", R.drawable.ic_history_24));
+        View historyRow = settingsRow("播放记录", R.drawable.ic_history_24);
+        historyRow.setOnClickListener(v -> startActivity(new Intent(this, HistoryActivity.class)));
+        page.addView(historyRow);
+        View sourceRow = settingsRow("视频源管理", R.drawable.ic_search_24);
+        sourceRow.setOnClickListener(v -> startActivity(new Intent(this, SourceManagementActivity.class)));
+        page.addView(sourceRow);
         page.addView(settingsRow("数据与缓存", R.drawable.ic_folder_outline_24));
     }
 
-    private View recentRow(String name, String coverUrl, int episode) {
+    private View recentRow(
+            String name,
+            String coverUrl,
+            int episode,
+            long position,
+            long duration,
+            String videoUrl,
+            int bangumiId
+    ) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackground(roundedRect(Color.rgb(244, 248, 255), 12));
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setBackground(roundedRect(Color.rgb(244, 248, 255), 14));
         ImageView cover = new ImageView(this);
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
         cover.setBackgroundColor(Color.rgb(238, 240, 244));
-        row.addView(cover, new LinearLayout.LayoutParams(dp(88), dp(128)));
+        row.addView(cover, new LinearLayout.LayoutParams(dp(72), dp(98)));
         if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
-        info.setPadding(dp(16), dp(2), 0, 0);
-        TextView title = label(name, 17, INK, true);
+        info.setPadding(dp(14), 0, 0, 0);
+        TextView title = label(name, 16, INK, true);
         title.setMaxLines(2);
-        info.addView(title);
-        info.addView(label("第 " + episode + " 集", 13, MUTED, false), matchWrap(0, 0, 4, 0));
+        info.addView(title, matchWrap(dp(46), 0, 0, 0));
+        String metadata = "第 " + episode + " 集";
+        if (position > 0) metadata += " · 看到 " + formatPlaybackTime(position);
+        info.addView(label(metadata, 13, MUTED, false), matchWrap(dp(24), 0, 0, 0));
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progress.setProgress(42);
+        progress.setMax(1000);
+        progress.setProgress(duration > 0 ? (int) Math.min(1000, position * 1000 / duration) : 0);
         progress.setProgressTintList(android.content.res.ColorStateList.valueOf(BLUE));
-        info.addView(progress, matchWrap(dp(4), 0, 6, 2));
-        Button resume = new Button(this, null, android.R.attr.borderlessButtonStyle);
-        resume.setText("继续播放");
-        resume.setTextColor(BLUE);
-        resume.setTextSize(15);
-        resume.setAllCaps(false);
-        resume.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        resume.setMinHeight(0);
-        resume.setMinimumHeight(0);
-        resume.setPadding(0, 0, 0, 0);
-        resume.setOnClickListener(v -> {
-            Intent intent = new Intent(this, PlayerActivity.class);
-            intent.putExtra("subject_name", name);
-            intent.putExtra("subject_cover", coverUrl);
-            intent.putExtra("episode", episode);
-            startActivity(intent);
-        });
-        info.addView(resume, matchWrap(dp(40), 0, 0, 0));
-        row.addView(info, new LinearLayout.LayoutParams(0, dp(128), 1));
+        info.addView(progress, matchWrap(dp(3), 0, 4, 4));
+        TextView resume = label("继续观看", 14, BLUE, true);
+        info.addView(resume, matchWrap(dp(24), 0, 0, 0));
+        row.addView(info, new LinearLayout.LayoutParams(0, dp(98), 1));
+        row.setOnClickListener(v -> openHistoryItem(name, coverUrl, episode,
+                position, videoUrl, bangumiId));
         return row;
     }
 
@@ -641,6 +709,7 @@ public class HomeActivity extends Activity {
             if (item == null) continue;
             String name = item.optString("name");
             String coverUrl = item.optString("cover");
+            int subjectId = item.optInt("id", 0);
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             if (index > 0) card.setPadding(dp(12), 0, 0, 0);
@@ -648,13 +717,14 @@ public class HomeActivity extends Activity {
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
             cover.setBackgroundColor(Color.rgb(238, 240, 244));
             card.addView(cover, new LinearLayout.LayoutParams(
-                    dp(102), dp(136)));
+                    dp(90), dp(120)));
             if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
             TextView title = label(name, 13, INK, true);
             title.setMaxLines(1);
-            card.addView(title, new LinearLayout.LayoutParams(dp(102), dp(32)));
-            card.setOnClickListener(v -> openSubject(new Subject(0, name, name, coverUrl, 0, "收藏")));
-            row.addView(card, new LinearLayout.LayoutParams(dp(102), dp(172)));
+            card.addView(title, new LinearLayout.LayoutParams(dp(90), dp(30)));
+            card.setOnClickListener(v -> openSubject(
+                    new Subject(subjectId, name, name, coverUrl, 0, "收藏")));
+            row.addView(card, new LinearLayout.LayoutParams(dp(90), dp(150)));
         }
         scroll.addView(row, new HorizontalScrollView.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -690,6 +760,35 @@ public class HomeActivity extends Activity {
         arrow.setColorFilter(MUTED);
         row.addView(arrow, new LinearLayout.LayoutParams(dp(24), dp(58)));
         return row;
+    }
+
+    private void openHistoryItem(
+            String name,
+            String cover,
+            int episode,
+            long position,
+            String videoUrl,
+            int bangumiId
+    ) {
+        Intent intent;
+        if (videoUrl != null && !videoUrl.isBlank()) {
+            intent = new Intent(this, PlayerActivity.class);
+            intent.putExtra("video_url", videoUrl);
+            intent.putExtra("resume_position", position);
+        } else {
+            intent = new Intent(this, MainActivity.class);
+            intent.putExtra("auto_resolve", true);
+        }
+        intent.putExtra("subject_name", name);
+        intent.putExtra("subject_cover", cover);
+        intent.putExtra("episode", episode);
+        intent.putExtra("bangumi_id", bangumiId);
+        startActivity(intent);
+    }
+
+    private String formatPlaybackTime(long milliseconds) {
+        long seconds = Math.max(0L, milliseconds / 1000L);
+        return String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
     }
 
     private void showError(LinearLayout target, String message, Runnable retry) {
