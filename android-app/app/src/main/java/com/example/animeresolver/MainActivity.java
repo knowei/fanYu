@@ -244,6 +244,7 @@ public class MainActivity extends Activity {
         root.addView(verificationPanel, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        SystemBars.apply(this, root, Color.WHITE);
         setContentView(root);
     }
 

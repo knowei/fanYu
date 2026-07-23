@@ -99,6 +99,7 @@ public class SiteVerificationActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         completeParams.setMargins(0, dp(12), 0, 0);
         root.addView(complete, completeParams);
+        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
         setContentView(root);
     }
 

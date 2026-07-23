@@ -16,6 +16,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -149,6 +150,9 @@ public class PlayerActivity extends Activity {
     private LinearLayout controlDock;
     private TextView playbackTimeView;
     private Button dockSourceButton;
+    private Button speedButton;
+    private TextView gestureHintView;
+    private ProgressBar bufferingIndicator;
     private String currentSourceName = "";
     private long resumePosition;
     private BottomSheetDialog sourceDialog;
@@ -162,6 +166,28 @@ public class PlayerActivity extends Activity {
     private LinearLayout discussionList;
     private EditText discussionInput;
     private boolean fullscreen;
+    private float playbackSpeed = 1f;
+    private float speedBeforeHold = 1f;
+    private float touchDownX;
+    private float touchDownY;
+    private boolean touchMoved;
+    private boolean holdSpeedActive;
+    private boolean verticalGesture;
+    private float initialBrightness;
+    private int initialVolume;
+    private long lastTapAt;
+    private float lastTapX;
+    private Runnable pendingSingleTap;
+    private final Runnable hideGestureHint = () -> {
+        if (gestureHintView != null && !holdSpeedActive) gestureHintView.setVisibility(View.GONE);
+    };
+    private final Runnable startHoldSpeed = () -> {
+        if (touchMoved || player == null || !player.isPlaying()) return;
+        holdSpeedActive = true;
+        speedBeforeHold = playbackSpeed;
+        player.setPlaybackSpeed(2f);
+        showGestureHint("2.0×  倍速播放", 0);
+    };
     private final Runnable hideControls = () -> {
         if (player != null && player.isPlaying() && controlDock != null) controlDock.setVisibility(View.GONE);
     };
@@ -178,6 +204,8 @@ public class PlayerActivity extends Activity {
     };
     private final Player.Listener playbackListener = new Player.Listener() {
         @Override public void onPlaybackStateChanged(int playbackState) {
+            if (bufferingIndicator != null) bufferingIndicator.setVisibility(
+                    playbackState == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
             if (playbackState != Player.STATE_READY || currentSourceName.isBlank()) return;
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null || state.url.isBlank()) return;
@@ -189,7 +217,17 @@ public class PlayerActivity extends Activity {
             renderSourcePicker();
         }
 
+        @Override public void onIsPlayingChanged(boolean isPlaying) {
+            if (isPlaying) {
+                getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            }
+        }
+
         @Override public void onPlayerError(PlaybackException error) {
+            if (bufferingIndicator != null) bufferingIndicator.setVisibility(View.GONE);
+            showGestureHint("播放失败，请切换视频源", 1400);
             if (currentSourceName.isBlank()) return;
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null) return;
@@ -331,7 +369,25 @@ public class PlayerActivity extends Activity {
             videoFrame.addView(previewImage, new android.widget.FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
-        videoFrame.setOnClickListener(v -> toggleControls());
+        View.OnTouchListener playerGestures = (v, event) -> handleVideoTouch(event);
+        videoFrame.setOnTouchListener(playerGestures);
+        playerView.setOnTouchListener(playerGestures);
+        if (previewImage != null) previewImage.setOnTouchListener(playerGestures);
+        bufferingIndicator = new ProgressBar(this);
+        bufferingIndicator.setIndeterminateTintList(ColorStateList.valueOf(Color.WHITE));
+        bufferingIndicator.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams bufferingParams =
+                new android.widget.FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER);
+        videoFrame.addView(bufferingIndicator, bufferingParams);
+        gestureHintView = text("", 16, Color.WHITE, true);
+        gestureHintView.setGravity(Gravity.CENTER);
+        gestureHintView.setPadding(dp(16), dp(9), dp(16), dp(9));
+        gestureHintView.setBackground(rounded(Color.argb(210, 22, 25, 31), 12,
+                Color.TRANSPARENT, 0));
+        gestureHintView.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams hintParams =
+                new android.widget.FrameLayout.LayoutParams(-2, dp(42), Gravity.CENTER);
+        videoFrame.addView(gestureHintView, hintParams);
         addPlayerControls();
         android.widget.FrameLayout.LayoutParams controlsParams =
                 new android.widget.FrameLayout.LayoutParams(
@@ -419,6 +475,7 @@ public class PlayerActivity extends Activity {
         pageScroll.addView(content);
         rootView.addView(pageScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        SystemBars.apply(this, rootView, WARM);
         setContentView(rootView);
     }
 
@@ -497,8 +554,11 @@ public class PlayerActivity extends Activity {
         });
         actions.addView(playPauseButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
         playbackTimeView = text("00:00 / 00:00", 13, Color.WHITE, false);
-        actions.addView(playbackTimeView, new LinearLayout.LayoutParams(dp(130), dp(42)));
+        actions.addView(playbackTimeView, new LinearLayout.LayoutParams(dp(118), dp(42)));
         actions.addView(new View(this), new LinearLayout.LayoutParams(0, dp(42), 1));
+        speedButton = dockTextButton("1.0×");
+        speedButton.setOnClickListener(v -> showSpeedPicker());
+        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(52), dp(42)));
         dockSourceButton = new Button(this);
         dockSourceButton.setText("自动");
         dockSourceButton.setTextColor(Color.WHITE);
@@ -506,7 +566,7 @@ public class PlayerActivity extends Activity {
         dockSourceButton.setAllCaps(false);
         dockSourceButton.setBackgroundColor(Color.TRANSPARENT);
         dockSourceButton.setOnClickListener(v -> showSourcePicker());
-        actions.addView(dockSourceButton, new LinearLayout.LayoutParams(dp(72), dp(42)));
+        actions.addView(dockSourceButton, new LinearLayout.LayoutParams(dp(62), dp(42)));
         MaterialButton fullscreenButton = videoIcon(R.drawable.ic_fullscreen_24);
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         actions.addView(fullscreenButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
@@ -516,7 +576,203 @@ public class PlayerActivity extends Activity {
     private String formatTime(long millis) {
         if (millis < 0) millis = 0;
         long seconds = millis / 1000;
-        return String.format(java.util.Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60);
+        long hours = seconds / 3600;
+        return hours > 0
+                ? String.format(java.util.Locale.CHINA, "%02d:%02d:%02d", hours,
+                        (seconds % 3600) / 60, seconds % 60)
+                : String.format(java.util.Locale.CHINA, "%02d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private Button dockTextButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(12);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumWidth(0);
+        button.setMinimumHeight(0);
+        button.setPadding(dp(3), 0, dp(3), 0);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        return button;
+    }
+
+    private boolean handleVideoTouch(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN -> {
+                touchDownX = event.getX();
+                touchDownY = event.getY();
+                touchMoved = false;
+                verticalGesture = false;
+                android.view.WindowManager.LayoutParams attributes = getWindow().getAttributes();
+                initialBrightness = attributes.screenBrightness < 0 ? 0.5f : attributes.screenBrightness;
+                android.media.AudioManager audio = (android.media.AudioManager)
+                        getSystemService(Context.AUDIO_SERVICE);
+                initialVolume = audio == null ? 0 : audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+                progressHandler.removeCallbacks(startHoldSpeed);
+                progressHandler.postDelayed(startHoldSpeed, 480);
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE -> {
+                float dx = event.getX() - touchDownX;
+                float dy = event.getY() - touchDownY;
+                if (Math.abs(dy) > dp(18) && Math.abs(dy) > Math.abs(dx) * 1.2f) {
+                    verticalGesture = true;
+                    touchMoved = true;
+                    progressHandler.removeCallbacks(startHoldSpeed);
+                    adjustVerticalGesture(-dy / Math.max(dp(140), videoFrame.getHeight() * 0.65f));
+                } else if (Math.abs(dx) > dp(18) || Math.abs(dy) > dp(18)) {
+                    touchMoved = true;
+                    progressHandler.removeCallbacks(startHoldSpeed);
+                }
+                return true;
+            }
+            case MotionEvent.ACTION_UP -> {
+                progressHandler.removeCallbacks(startHoldSpeed);
+                if (holdSpeedActive) {
+                    finishHoldSpeed();
+                    return true;
+                }
+                if (verticalGesture) {
+                    progressHandler.postDelayed(hideGestureHint, 500);
+                    verticalGesture = false;
+                    return true;
+                }
+                if (!touchMoved) handleVideoTap(event.getX());
+                return true;
+            }
+            case MotionEvent.ACTION_CANCEL -> {
+                progressHandler.removeCallbacks(startHoldSpeed);
+                if (holdSpeedActive) finishHoldSpeed();
+                if (verticalGesture) {
+                    verticalGesture = false;
+                    progressHandler.postDelayed(hideGestureHint, 300);
+                }
+                return true;
+            }
+            default -> { return true; }
+        }
+    }
+
+    private void adjustVerticalGesture(float delta) {
+        if (touchDownX < videoFrame.getWidth() / 2f) {
+            float brightness = Math.max(0.05f, Math.min(1f, initialBrightness + delta));
+            android.view.WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.screenBrightness = brightness;
+            getWindow().setAttributes(attributes);
+            showGestureHint("亮度  " + Math.round(brightness * 100) + "%", 0);
+        } else {
+            android.media.AudioManager audio = (android.media.AudioManager)
+                    getSystemService(Context.AUDIO_SERVICE);
+            if (audio == null) return;
+            int maximum = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC);
+            int volume = Math.max(0, Math.min(maximum, initialVolume + Math.round(delta * maximum)));
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, volume, 0);
+            int percent = maximum == 0 ? 0 : Math.round(volume * 100f / maximum);
+            showGestureHint("音量  " + percent + "%", 0);
+        }
+    }
+
+    private void handleVideoTap(float x) {
+        long now = System.currentTimeMillis();
+        boolean doubleTap = now - lastTapAt <= 320 && Math.abs(x - lastTapX) <= dp(96);
+        if (doubleTap) {
+            if (pendingSingleTap != null) progressHandler.removeCallbacks(pendingSingleTap);
+            pendingSingleTap = null;
+            lastTapAt = 0;
+            if (x < videoFrame.getWidth() * 0.4f) seekBy(-10_000L);
+            else if (x > videoFrame.getWidth() * 0.6f) seekBy(10_000L);
+            else togglePlaybackFromGesture();
+            return;
+        }
+        lastTapAt = now;
+        lastTapX = x;
+        pendingSingleTap = () -> {
+            toggleControls();
+            pendingSingleTap = null;
+        };
+        progressHandler.postDelayed(pendingSingleTap, 330);
+    }
+
+    private void seekBy(long offset) {
+        if (player == null) return;
+        long target = Math.max(0, player.getCurrentPosition() + offset);
+        if (player.getDuration() > 0) target = Math.min(player.getDuration(), target);
+        player.seekTo(target);
+        showGestureHint(offset > 0 ? "+10 秒" : "−10 秒", 650);
+    }
+
+    private void togglePlaybackFromGesture() {
+        if (player == null) return;
+        if (player.isPlaying()) {
+            player.pause();
+            showGestureHint("已暂停", 650);
+        } else {
+            player.play();
+            showGestureHint("继续播放", 650);
+        }
+        showControlsTemporarily();
+    }
+
+    private void finishHoldSpeed() {
+        holdSpeedActive = false;
+        if (player != null) player.setPlaybackSpeed(speedBeforeHold);
+        showGestureHint(speedLabel(speedBeforeHold), 450);
+    }
+
+    private void showGestureHint(String message, long hideAfter) {
+        if (gestureHintView == null) return;
+        progressHandler.removeCallbacks(hideGestureHint);
+        gestureHintView.setText(message);
+        gestureHintView.setVisibility(View.VISIBLE);
+        if (hideAfter > 0) progressHandler.postDelayed(hideGestureHint, hideAfter);
+    }
+
+    private void showSpeedPicker() {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(20), dp(18), dp(20), dp(24));
+        sheet.setBackgroundColor(Color.WHITE);
+        sheet.addView(text("播放速度", 20, INK, true),
+                new LinearLayout.LayoutParams(-1, dp(42)));
+        float[] speeds = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
+        for (float speed : speeds) {
+            TextView option = text(speedLabel(speed), 16,
+                    Math.abs(speed - playbackSpeed) < 0.01f ? BLUE : INK,
+                    Math.abs(speed - playbackSpeed) < 0.01f);
+            option.setGravity(Gravity.CENTER_VERTICAL);
+            option.setPadding(dp(14), 0, dp(14), 0);
+            if (Math.abs(speed - playbackSpeed) < 0.01f) {
+                option.setText(speedLabel(speed) + "    ✓");
+                option.setBackground(rounded(Color.rgb(239, 246, 255), 11,
+                        Color.TRANSPARENT, 0));
+            }
+            option.setOnClickListener(v -> {
+                setPlaybackSpeed(speed);
+                dialog.dismiss();
+            });
+            LinearLayout.LayoutParams optionParams = new LinearLayout.LayoutParams(-1, dp(48));
+            optionParams.setMargins(0, dp(3), 0, dp(3));
+            sheet.addView(option, optionParams);
+        }
+        dialog.setContentView(sheet);
+        dialog.show();
+    }
+
+    private void setPlaybackSpeed(float speed) {
+        playbackSpeed = speed;
+        if (player != null) player.setPlaybackSpeed(speed);
+        if (speedButton != null) speedButton.setText(speedLabel(speed));
+        showGestureHint("已切换至 " + speedLabel(speed), 700);
+    }
+
+    private String speedLabel(float speed) {
+        if (Math.abs(speed - Math.round(speed)) < 0.01f) return Math.round(speed) + ".0×";
+        return (speed == 0.75f || speed == 1.25f ? String.format(java.util.Locale.CHINA, "%.2f", speed)
+                : String.format(java.util.Locale.CHINA, "%.1f", speed)) + "×";
     }
 
     private void toggleControls() {
@@ -549,6 +805,7 @@ public class PlayerActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(fullscreen
                 ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 : View.SYSTEM_UI_FLAG_VISIBLE);
+        SystemBars.setFullscreen(rootView, fullscreen);
         LinearLayout.LayoutParams areaParams = fullscreen
                 ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1)
                 : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -755,6 +1012,7 @@ public class PlayerActivity extends Activity {
     private ExoPlayer createPlayer() {
         ExoPlayer value = new ExoPlayer.Builder(this).build();
         value.addListener(playbackListener);
+        value.setPlaybackSpeed(playbackSpeed);
         return value;
     }
 
@@ -1185,6 +1443,9 @@ public class PlayerActivity extends Activity {
         saveWatchHistory();
         progressHandler.removeCallbacks(progressUpdater);
         progressHandler.removeCallbacks(hideControls);
+        progressHandler.removeCallbacks(startHoldSpeed);
+        progressHandler.removeCallbacks(hideGestureHint);
+        if (pendingSingleTap != null) progressHandler.removeCallbacks(pendingSingleTap);
         unregisterReceiver(sourceReceiver);
         if (player != null) player.release();
         super.onDestroy();

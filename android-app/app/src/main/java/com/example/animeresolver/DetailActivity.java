@@ -120,6 +120,7 @@ public class DetailActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
+        SystemBars.apply(this, root, WARM);
         setContentView(root);
     }
 

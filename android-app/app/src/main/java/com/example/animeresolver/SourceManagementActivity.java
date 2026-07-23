@@ -19,6 +19,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -26,6 +27,9 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -49,6 +53,8 @@ public class SourceManagementActivity extends Activity {
     private static final int LINE = Color.rgb(229, 231, 235);
     private static final int REQUEST_VERIFY = 701;
     private static final int REQUEST_EDIT_SOURCE = 702;
+    private static final int REQUEST_IMPORT_RULES = 703;
+    private static final int REQUEST_EXPORT_RULES = 704;
 
     private final OkHttpClient client = new OkHttpClient.Builder().followRedirects(true).build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
@@ -87,6 +93,18 @@ public class SourceManagementActivity extends Activity {
         tip.setLineSpacing(dp(3), 1f);
         root.addView(tip, params(-1, -2, 0, 2, 0, 14));
 
+        LinearLayout ruleActions = new LinearLayout(this);
+        ruleActions.setGravity(Gravity.CENTER_VERTICAL);
+        Button importRules = actionButton("导入规则", false);
+        importRules.setOnClickListener(v -> chooseImportFile());
+        ruleActions.addView(importRules, new LinearLayout.LayoutParams(0, dp(40), 1));
+        Button exportRules = actionButton("导出规则", false);
+        exportRules.setOnClickListener(v -> chooseExportFile());
+        LinearLayout.LayoutParams exportParams = new LinearLayout.LayoutParams(0, dp(40), 1);
+        exportParams.setMargins(dp(10), 0, 0, 0);
+        ruleActions.addView(exportRules, exportParams);
+        root.addView(ruleActions, params(-1, dp(40), 0, 0, 0, 12));
+
         LinearLayout search = new LinearLayout(this);
         search.setGravity(Gravity.CENTER_VERTICAL);
         search.setPadding(dp(12), 0, dp(5), 0);
@@ -112,6 +130,7 @@ public class SourceManagementActivity extends Activity {
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
         setContentView(root);
     }
 
@@ -265,6 +284,21 @@ public class SourceManagementActivity extends Activity {
         startActivityForResult(intent, REQUEST_EDIT_SOURCE);
     }
 
+    private void chooseImportFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        startActivityForResult(intent, REQUEST_IMPORT_RULES);
+    }
+
+    private void chooseExportFile() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "fanyu-source-rules.json");
+        startActivityForResult(intent, REQUEST_EXPORT_RULES);
+    }
+
     private void confirmDelete(SourceSite source) {
         new AlertDialog.Builder(this).setTitle("删除本地源？")
                 .setMessage("将删除“" + source.name + "”，不会影响 css1.json 订阅。")
@@ -288,11 +322,50 @@ public class SourceManagementActivity extends Activity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK) return;
         if (requestCode == REQUEST_VERIFY && resultCode == RESULT_OK && verifyingSource != null) {
             checkSource(verifyingSource, keywordInput.getText().toString().trim());
-        } else if (requestCode == REQUEST_EDIT_SOURCE && resultCode == RESULT_OK) {
+        } else if (requestCode == REQUEST_EDIT_SOURCE) {
             loadSources();
+        } else if (requestCode == REQUEST_IMPORT_RULES && data != null && data.getData() != null) {
+            importRules(data.getData());
+        } else if (requestCode == REQUEST_EXPORT_RULES && data != null && data.getData() != null) {
+            exportRules(data.getData());
         }
+    }
+
+    private void importRules(Uri uri) {
+        executor.execute(() -> {
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) throw new IOException("无法读取所选文件");
+                String json = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+                LocalSourceStore.ImportResult result = LocalSourceStore.importJson(this, json);
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "已导入 " + result.imported() + " 条规则"
+                            + (result.skipped() > 0 ? "，跳过 " + result.skipped() + " 条" : ""),
+                            Toast.LENGTH_LONG).show();
+                    loadSources();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "导入失败：" + cleanError(error.getMessage()), Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    private void exportRules(Uri uri) {
+        executor.execute(() -> {
+            try (OutputStream output = getContentResolver().openOutputStream(uri, "wt")) {
+                if (output == null) throw new IOException("无法写入所选文件");
+                output.write(LocalSourceStore.exportJson(this).getBytes(StandardCharsets.UTF_8));
+                output.flush();
+                runOnUiThread(() -> Toast.makeText(this,
+                        "本地视频源规则已导出", Toast.LENGTH_LONG).show());
+            } catch (Exception error) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "导出失败：" + cleanError(error.getMessage()), Toast.LENGTH_LONG).show());
+            }
+        });
     }
 
     private void updateSummary() {

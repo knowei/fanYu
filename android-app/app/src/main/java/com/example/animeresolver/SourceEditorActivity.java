@@ -115,6 +115,7 @@ public class SourceEditorActivity extends Activity {
         form.addView(save, margins(-1, dp(50), 0, 10, 0));
         scroll.addView(form, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
         setContentView(root);
     }
 

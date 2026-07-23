@@ -121,6 +121,7 @@ public class HomeActivity extends Activity {
         nav.addView(broadcastTab, new LinearLayout.LayoutParams(0, dp(62), 1));
         nav.addView(myTab, new LinearLayout.LayoutParams(0, dp(62), 1));
         root.addView(nav);
+        SystemBars.apply(this, root, WARM_WHITE);
         setContentView(root);
     }
 

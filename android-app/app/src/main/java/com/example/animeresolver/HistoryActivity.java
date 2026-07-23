@@ -104,6 +104,7 @@ public class HistoryActivity extends Activity {
         scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        SystemBars.apply(this, root, WARM_WHITE);
         setContentView(root);
     }
 
