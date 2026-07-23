@@ -25,3 +25,10 @@ $env:ANDROID_HOME='D:\environ\androidsdk'
 ```
 
 脚本会读取 `app/build.gradle.kts` 中的版本号，并将 APK 复制到 `releases` 目录，同时输出 SHA256。
+
+视频源管理：
+
+- `css1.json` 作为只读订阅源，不会被 App 修改；
+- “我的 → 视频源管理 → 添加”可以创建本地源；
+- 输入网站首页或搜索地址后，可尝试自动识别搜索结果和选集结构；
+- 自动探测失败时仍可手动填写 CSS 选择器；需要验证码的网站应先在 App 内人工验证。

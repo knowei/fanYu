@@ -1,6 +1,7 @@
 package com.example.animeresolver;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -47,6 +48,7 @@ public class SourceManagementActivity extends Activity {
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
     private static final int REQUEST_VERIFY = 701;
+    private static final int REQUEST_EDIT_SOURCE = 702;
 
     private final OkHttpClient client = new OkHttpClient.Builder().followRedirects(true).build();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
@@ -76,6 +78,9 @@ public class SourceManagementActivity extends Activity {
         header.addView(back, new LinearLayout.LayoutParams(dp(44), dp(48)));
         TextView title = text("视频源管理", 22, INK, true);
         header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
+        Button add = actionButton("添加", false);
+        add.setOnClickListener(v -> openEditor(null));
+        header.addView(add, new LinearLayout.LayoutParams(dp(66), dp(36)));
         root.addView(header);
 
         TextView tip = text("用一部番剧测试各个搜索源；只检查搜索，不会请求视频。需要验证码的站点可在应用内统一验证。", 13, MUTED, false);
@@ -112,20 +117,27 @@ public class SourceManagementActivity extends Activity {
 
     private void loadSources() {
         executor.execute(() -> {
+            List<SourceSite> parsed = new ArrayList<>();
+            String remoteError = "";
             try {
                 String json = getPage(SUBSCRIPTION_URL).html;
-                List<SourceSite> parsed = parseSources(json);
-                addOrangeSource(parsed);
-                parsed.sort(Comparator.comparingInt(source -> source.tier));
-                runOnUiThread(() -> {
-                    sources.clear();
-                    sources.addAll(parsed);
-                    renderSources();
-                    updateSummary();
-                });
+                parsed.addAll(parseSources(json));
             } catch (Exception error) {
-                runOnUiThread(() -> summary.setText("视频源读取失败，请返回后重试"));
+                remoteError = "订阅源暂时读取失败，仅显示本地源";
             }
+            for (LocalSourceStore.Config local : LocalSourceStore.read(this)) {
+                parsed.add(SourceSite.fromLocal(local));
+            }
+            parsed.sort(Comparator.comparingInt(source -> source.tier));
+            String finalRemoteError = remoteError;
+            runOnUiThread(() -> {
+                sources.clear();
+                sources.addAll(parsed);
+                renderSources();
+                updateSummary();
+                if (!finalRemoteError.isBlank()) summary.setText(finalRemoteError + " · 本地 "
+                        + LocalSourceStore.read(this).size() + " 个");
+            });
         });
     }
 
@@ -151,31 +163,26 @@ public class SourceManagementActivity extends Activity {
             String url = search.optString("searchUrl");
             if (url.isBlank() || selector.isBlank()) continue;
             result.add(new SourceSite(args.optString("name", "未命名源"), url, selector,
-                    args.optInt("tier", 99)));
+                    args.optInt("tier", 99), ""));
         }
         return result;
-    }
-
-    private void addOrangeSource(List<SourceSite> target) {
-        boolean exists = target.stream().anyMatch(source -> source.searchUrl.contains("mgnacg.com"));
-        if (!exists) target.add(new SourceSite("橘子动漫",
-                "https://www.mgnacg.com/search/-------------/?wd={keyword}",
-                ".search-box .thumb-content > .thumb-txt", 8));
     }
 
     private void testAll() {
         String keyword = keywordInput.getText().toString().trim();
         if (keyword.isEmpty() || sources.isEmpty()) return;
         for (SourceSite source : sources) {
+            if (!source.enabled) continue;
             source.status = "正在测试";
             source.detail = "正在检查搜索会话…";
         }
         renderSources();
         updateSummary();
-        for (SourceSite source : sources) checkSource(source, keyword);
+        for (SourceSite source : sources) if (source.enabled) checkSource(source, keyword);
     }
 
     private void checkSource(SourceSite source, String keyword) {
+        if (!source.enabled || keyword == null || keyword.isBlank()) return;
         source.status = "正在测试";
         source.detail = "正在检查搜索会话…";
         runOnUiThread(() -> { renderSources(); updateSummary(); });
@@ -220,13 +227,24 @@ public class SourceManagementActivity extends Activity {
         badge.setBackground(round(statusBackground(source.status), 12, Color.TRANSPARENT, 0));
         top.addView(badge, new LinearLayout.LayoutParams(-2, dp(26)));
         card.addView(top);
-        card.addView(text(source.detail, 13, MUTED, false), params(-1, -2, 0, 3, 0, 8));
+        String detailText = source.localId.isBlank() ? source.detail
+                : "本地源 · " + source.detail;
+        card.addView(text(detailText, 13, MUTED, false), params(-1, -2, 0, 3, 0, 8));
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.RIGHT);
-        Button retry = actionButton("重新测试", false);
-        retry.setOnClickListener(v -> checkSource(source, keywordInput.getText().toString().trim()));
-        actions.addView(retry, new LinearLayout.LayoutParams(dp(84), dp(34)));
-        if ("需要验证".equals(source.status)) {
+        if (!source.localId.isBlank()) {
+            Button edit = actionButton("编辑", false);
+            edit.setOnClickListener(v -> openEditor(source.localId));
+            actions.addView(edit, new LinearLayout.LayoutParams(dp(64), dp(34)));
+        }
+        if (source.enabled) {
+            Button retry = actionButton("重新测试", false);
+            retry.setOnClickListener(v -> checkSource(source, keywordInput.getText().toString().trim()));
+            LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(dp(84), dp(34));
+            retryParams.setMargins(dp(8), 0, 0, 0);
+            actions.addView(retry, retryParams);
+        }
+        if (source.enabled && "需要验证".equals(source.status)) {
             Button verify = actionButton("应用内验证", true);
             verify.setOnClickListener(v -> verify(source));
             LinearLayout.LayoutParams verifyParams = new LinearLayout.LayoutParams(dp(104), dp(34));
@@ -234,7 +252,27 @@ public class SourceManagementActivity extends Activity {
             actions.addView(verify, verifyParams);
         }
         card.addView(actions);
+        if (!source.localId.isBlank()) card.setOnLongClickListener(v -> {
+            confirmDelete(source);
+            return true;
+        });
         return card;
+    }
+
+    private void openEditor(String sourceId) {
+        Intent intent = new Intent(this, SourceEditorActivity.class);
+        if (sourceId != null) intent.putExtra("source_id", sourceId);
+        startActivityForResult(intent, REQUEST_EDIT_SOURCE);
+    }
+
+    private void confirmDelete(SourceSite source) {
+        new AlertDialog.Builder(this).setTitle("删除本地源？")
+                .setMessage("将删除“" + source.name + "”，不会影响 css1.json 订阅。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> {
+                    LocalSourceStore.remove(this, source.localId);
+                    loadSources();
+                }).show();
     }
 
     private void verify(SourceSite source) {
@@ -252,6 +290,8 @@ public class SourceManagementActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_VERIFY && resultCode == RESULT_OK && verifyingSource != null) {
             checkSource(verifyingSource, keywordInput.getText().toString().trim());
+        } else if (requestCode == REQUEST_EDIT_SOURCE && resultCode == RESULT_OK) {
+            loadSources();
         }
     }
 
@@ -378,14 +418,37 @@ public class SourceManagementActivity extends Activity {
         final String searchUrl;
         final String subjectSelector;
         final int tier;
+        final String localId;
+        final boolean enabled;
         String status = "等待测试";
         String detail = "输入番剧名后可检查这个源";
 
-        SourceSite(String name, String searchUrl, String subjectSelector, int tier) {
+        SourceSite(String name, String searchUrl, String subjectSelector, int tier, String localId) {
+            this(name, searchUrl, subjectSelector, tier, localId, true);
+        }
+
+        SourceSite(String name, String searchUrl, String subjectSelector, int tier,
+                   String localId, boolean enabled) {
             this.name = name;
             this.searchUrl = searchUrl;
             this.subjectSelector = subjectSelector;
             this.tier = tier;
+            this.localId = localId == null ? "" : localId;
+            this.enabled = enabled;
+        }
+
+        static SourceSite fromLocal(LocalSourceStore.Config config) {
+            SourceSite source = new SourceSite(config.name, config.searchUrl,
+                    config.subjectSelector, config.tier, config.id, config.enabled);
+            if (!config.enabled) {
+                source.status = "已停用";
+                source.detail = "当前不会参与视频解析";
+            } else if (config.autoDetected) {
+                source.detail = "自动探测配置，可编辑或长按删除";
+            } else {
+                source.detail = "手动配置，可编辑或长按删除";
+            }
+            return source;
         }
     }
 

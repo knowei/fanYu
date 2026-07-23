@@ -540,24 +540,16 @@ public class MainActivity extends Activity {
     }
 
     private void addLocalSources(List<SourceConfig> sources) {
-        boolean present = sources.stream().anyMatch(source ->
-                source.name.equals("橘子动漫") || source.searchUrl.contains("mgnacg.com"));
-        if (present) return;
-        sources.add(new SourceConfig(
-                "橘子动漫",
-                "https://www.mgnacg.com/search/-------------/?wd={keyword}",
-                "indexed",
-                ".search-box .thumb-content > .thumb-txt",
-                ".search-box .thumb-menu > a",
-                "index-grouped",
-                ".anthology-tab > .swiper-wrapper a",
-                "^(?<ch>.+?)(\\d+)?$",
-                ".anthology-list-box",
-                "a",
-                "",
-                "第\\s*(?<ep>.+)\\s*[话集]",
-                8
-        ));
+        for (LocalSourceStore.Config local : LocalSourceStore.read(this)) {
+            if (!local.enabled || local.searchUrl.isBlank() || local.subjectSelector.isBlank()) continue;
+            boolean present = sources.stream().anyMatch(source ->
+                    source.searchUrl.equalsIgnoreCase(local.searchUrl));
+            if (present) continue;
+            sources.add(new SourceConfig(local.name, local.searchUrl, "a",
+                    local.subjectSelector, "", "index-grouped", local.channelSelector,
+                    "", local.episodeContainer, local.episodeSelector, "",
+                    "第\\s*(?<ep>.+)\\s*[话集]", local.tier));
+        }
         sources.sort(Comparator.comparingInt(source -> source.tier));
     }
 
