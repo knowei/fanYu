@@ -17,6 +17,7 @@ import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 
 public class SiteVerificationActivity extends Activity {
@@ -90,17 +91,34 @@ public class SiteVerificationActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         Button complete = actionButton("验证完成，继续测试");
-        complete.setOnClickListener(v -> {
-            CookieManager.getInstance().flush();
-            setResult(RESULT_OK);
-            finish();
-        });
+        complete.setOnClickListener(v -> confirmVerification());
         LinearLayout.LayoutParams completeParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         completeParams.setMargins(0, dp(12), 0, 0);
         root.addView(complete, completeParams);
         SystemBars.apply(this, root, Color.rgb(253, 252, 250));
         setContentView(root);
+    }
+
+    private void confirmVerification() {
+        // Do not treat closing a normal or still-blocked page as a successful verification.
+        webView.evaluateJavascript("(function(){"
+                + "var visible=function(e){if(!e)return false;var s=getComputedStyle(e);"
+                + "return s.display!=='none'&&s.visibility!=='hidden'&&e.offsetParent!==null;};"
+                + "var nodes=document.querySelectorAll('#challenge-form,.cf-challenge-running,"
+                + "iframe[src*=\"challenges.cloudflare.com\"],iframe[src*=\"cdn-cgi\"]');"
+                + "for(var i=0;i<nodes.length;i++){if(visible(nodes[i]))return 'challenge';}"
+                + "var text=((document.title||'')+' '+((document.body&&document.body.innerText)||'')).toLowerCase();"
+                + "return /just a moment|checking your browser|security verification/.test(text)?'challenge':'ready';"
+                + "})()", value -> {
+            if (value != null && value.contains("challenge")) {
+                Toast.makeText(this, "网站仍在验证中，请完成验证后再继续", Toast.LENGTH_LONG).show();
+                return;
+            }
+            CookieManager.getInstance().flush();
+            setResult(RESULT_OK);
+            finish();
+        });
     }
 
     @Override

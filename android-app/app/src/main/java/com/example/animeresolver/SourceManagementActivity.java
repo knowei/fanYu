@@ -211,6 +211,8 @@ public class SourceManagementActivity extends Activity {
                 String url = source.searchUrl.replace("{keyword}", Uri.encode(keyword));
                 HttpPage page = getPage(url);
                 if (isChallengePage(page.html)) {
+                    DiagnosticStore.record(this, "source-test", source.name,
+                            "verification required", page.url);
                     source.status = "需要验证";
                     source.detail = "完成一次站点验证后可再次测试";
                 } else {
@@ -221,6 +223,8 @@ public class SourceManagementActivity extends Activity {
                 }
             } catch (Exception error) {
                 source.status = "连接失败";
+                DiagnosticStore.record(this, "source-test", source.name,
+                        error.getMessage(), source.searchUrl);
                 source.detail = cleanError(error.getMessage());
             }
             runOnUiThread(() -> { renderSources(); updateSummary(); });
@@ -401,6 +405,13 @@ public class SourceManagementActivity extends Activity {
 
     private boolean isChallengePage(String html) {
         String value = html == null ? "" : html.toLowerCase(Locale.ROOT);
+        boolean cloudflareChallenge = value.contains("cf-chl-")
+                || value.contains("challenge-platform")
+                || value.contains("cdn-cgi/challenge")
+                || value.contains("just a moment");
+        boolean firstPartyCaptcha = value.contains("verify-submit") && value.contains("ds-verify");
+        // A normal page can preload Turnstile or verification scripts. Those alone are not a challenge.
+        if (!cloudflareChallenge && !firstPartyCaptcha) return false;
         return value.contains("cf-chl-") || value.contains("challenge-platform")
                 || value.contains("cdn-cgi/challenge") || value.contains("turnstile")
                 || value.contains("just a moment") || value.contains("安全验证")

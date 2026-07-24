@@ -151,6 +151,10 @@ public class PlayerActivity extends Activity {
     private TextView playbackTimeView;
     private Button dockSourceButton;
     private Button speedButton;
+    private Button fullscreenEpisodeButton;
+    private Button previousEpisodeButton;
+    private Button nextEpisodeButton;
+    private LinearLayout fullscreenPickerPanel;
     private TextView gestureHintView;
     private ProgressBar bufferingIndicator;
     private String currentSourceName = "";
@@ -232,6 +236,8 @@ public class PlayerActivity extends Activity {
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null) return;
             String message = error.getErrorCodeName();
+            DiagnosticStore.record(PlayerActivity.this, "player", currentSourceName,
+                    message, state.siteUrl);
             sourceStates.put(currentSourceName,
                     new SourceState(SOURCE_FAILED, state.url, message, state.siteUrl));
             cacheSourceState(episode, currentSourceName,
@@ -567,10 +573,156 @@ public class PlayerActivity extends Activity {
         dockSourceButton.setBackgroundColor(Color.TRANSPARENT);
         dockSourceButton.setOnClickListener(v -> showSourcePicker());
         actions.addView(dockSourceButton, new LinearLayout.LayoutParams(dp(62), dp(42)));
+        previousEpisodeButton = dockTextButton("上一集");
+        previousEpisodeButton.setOnClickListener(v -> resolveEpisode(episode - 1));
+        previousEpisodeButton.setVisibility(View.GONE);
+        actions.addView(previousEpisodeButton, new LinearLayout.LayoutParams(dp(54), dp(42)));
+        nextEpisodeButton = dockTextButton("下一集");
+        nextEpisodeButton.setOnClickListener(v -> resolveEpisode(episode + 1));
+        nextEpisodeButton.setVisibility(View.GONE);
+        actions.addView(nextEpisodeButton, new LinearLayout.LayoutParams(dp(54), dp(42)));
+        fullscreenEpisodeButton = dockTextButton("选集");
+        fullscreenEpisodeButton.setOnClickListener(v -> showFullscreenEpisodePicker());
+        fullscreenEpisodeButton.setVisibility(View.GONE);
+        actions.addView(fullscreenEpisodeButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
         MaterialButton fullscreenButton = videoIcon(R.drawable.ic_fullscreen_24);
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
         actions.addView(fullscreenButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
         controlDock.addView(actions);
+    }
+
+    private void showFullscreenEpisodePicker() {
+        if (fullscreen) {
+            showFullscreenEpisodePanel();
+            return;
+        }
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(20), dp(12), dp(20), dp(26));
+        sheet.setBackgroundColor(WARM);
+        sheet.addView(text("选集", 20, INK, true), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout row = null;
+        for (int value = 1; value <= availableEpisodes; value++) {
+            if ((value - 1) % 4 == 0) {
+                row = new LinearLayout(this);
+                grid.addView(row, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            }
+            Button item = new Button(this);
+            item.setText(String.valueOf(value));
+            item.setTextSize(14);
+            item.setAllCaps(false);
+            item.setTextColor(value == episode ? Color.WHITE : INK);
+            item.setBackground(rounded(value == episode ? BLUE : Color.TRANSPARENT,
+                    9, value == episode ? BLUE : LINE, 1));
+            int target = value;
+            item.setOnClickListener(v -> {
+                dialog.dismiss();
+                resolveEpisode(target);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+            params.setMargins(dp(3), dp(4), dp(3), dp(4));
+            row.addView(item, params);
+        }
+        scroll.addView(grid);
+        sheet.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                Math.min(dp(300), dp(48) * ((availableEpisodes + 3) / 4))));
+        dialog.setContentView(sheet);
+        dialog.show();
+    }
+
+    private void showFullscreenSpeedPanel() {
+        LinearLayout list = createFullscreenPickerPanel("播放速度");
+        float[] speeds = {0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f};
+        for (float speed : speeds) {
+            Button option = fullscreenPickerOption(speedLabel(speed),
+                    Math.abs(speed - playbackSpeed) < 0.01f);
+            option.setOnClickListener(v -> {
+                setPlaybackSpeed(speed);
+                hideFullscreenPickerPanel();
+                showControlsTemporarily();
+            });
+            list.addView(option);
+        }
+    }
+
+    private void showFullscreenEpisodePanel() {
+        LinearLayout list = createFullscreenPickerPanel("选集");
+        for (int value = 1; value <= availableEpisodes; value++) {
+            Button option = fullscreenPickerOption("第 " + value + " 集", value == episode);
+            int target = value;
+            option.setOnClickListener(v -> {
+                hideFullscreenPickerPanel();
+                resolveEpisode(target);
+            });
+            list.addView(option);
+        }
+        ScrollView scroll = (ScrollView) list.getParent();
+        scroll.post(() -> scroll.scrollTo(0, Math.max(0, (episode - 1) * dp(46) - dp(80))));
+    }
+
+    private LinearLayout createFullscreenPickerPanel(String title) {
+        hideFullscreenPickerPanel();
+        controlDock.setVisibility(View.GONE);
+        fullscreenPickerPanel = new LinearLayout(this);
+        fullscreenPickerPanel.setOrientation(LinearLayout.VERTICAL);
+        fullscreenPickerPanel.setPadding(dp(10), dp(10), dp(10), dp(10));
+        fullscreenPickerPanel.setBackground(rounded(Color.argb(238, 18, 22, 28),
+                12, Color.argb(90, 255, 255, 255), 1));
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(text(title, 16, Color.WHITE, true),
+                new LinearLayout.LayoutParams(0, dp(40), 1));
+        TextView close = text("×", 22, Color.WHITE, false);
+        close.setGravity(Gravity.CENTER);
+        close.setOnClickListener(v -> {
+            hideFullscreenPickerPanel();
+            showControlsTemporarily();
+        });
+        header.addView(close, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        fullscreenPickerPanel.addView(header);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        fullscreenPickerPanel.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(
+                dp(176), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        params.setMargins(0, dp(18), dp(12), dp(18));
+        videoFrame.addView(fullscreenPickerPanel, params);
+        return list;
+    }
+
+    private Button fullscreenPickerOption(String label, boolean selected) {
+        Button option = new Button(this);
+        option.setText(label);
+        option.setTextSize(14);
+        option.setAllCaps(false);
+        option.setGravity(Gravity.CENTER);
+        option.setTextColor(Color.WHITE);
+        option.setMinHeight(0);
+        option.setMinWidth(0);
+        option.setBackground(rounded(selected ? BLUE : Color.TRANSPARENT,
+                9, selected ? BLUE : Color.argb(60, 255, 255, 255), 1));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        params.setMargins(0, dp(3), 0, dp(3));
+        option.setLayoutParams(params);
+        return option;
+    }
+
+    private void hideFullscreenPickerPanel() {
+        if (fullscreenPickerPanel != null && fullscreenPickerPanel.getParent() == videoFrame) {
+            videoFrame.removeView(fullscreenPickerPanel);
+        }
+        fullscreenPickerPanel = null;
     }
 
     private String formatTime(long millis) {
@@ -731,6 +883,10 @@ public class PlayerActivity extends Activity {
     }
 
     private void showSpeedPicker() {
+        if (fullscreen) {
+            showFullscreenSpeedPanel();
+            return;
+        }
         BottomSheetDialog dialog = new BottomSheetDialog(this);
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
@@ -776,6 +932,11 @@ public class PlayerActivity extends Activity {
     }
 
     private void toggleControls() {
+        if (fullscreenPickerPanel != null) {
+            hideFullscreenPickerPanel();
+            showControlsTemporarily();
+            return;
+        }
         if (controlDock.getVisibility() == View.VISIBLE) {
             controlDock.setVisibility(View.GONE);
             progressHandler.removeCallbacks(hideControls);
@@ -797,10 +958,12 @@ public class PlayerActivity extends Activity {
     }
 
     private void toggleFullscreen() {
+        hideFullscreenPickerPanel();
         fullscreen = !fullscreen;
         appBar.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
         pageScroll.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
         controlDock.setVisibility(View.VISIBLE);
+        updateFullscreenControls();
         setRequestedOrientation(fullscreen ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().getDecorView().setSystemUiVisibility(fullscreen
                 ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -813,6 +976,22 @@ public class PlayerActivity extends Activity {
         videoFrame.setLayoutParams(fullscreen
                 ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1)
                 : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(221)));
+    }
+
+    private void updateFullscreenControls() {
+        if (speedButton != null) speedButton.setVisibility(View.VISIBLE);
+        if (dockSourceButton != null) dockSourceButton.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (fullscreenEpisodeButton != null) fullscreenEpisodeButton.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
+        if (previousEpisodeButton != null) {
+            previousEpisodeButton.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
+            previousEpisodeButton.setEnabled(episode > 1);
+            previousEpisodeButton.setAlpha(episode > 1 ? 1f : 0.35f);
+        }
+        if (nextEpisodeButton != null) {
+            nextEpisodeButton.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
+            nextEpisodeButton.setEnabled(episode < availableEpisodes);
+            nextEpisodeButton.setAlpha(episode < availableEpisodes ? 1f : 0.35f);
+        }
     }
 
     private MaterialButton icon(int res) {
@@ -1279,6 +1458,7 @@ public class PlayerActivity extends Activity {
         sourceButton.setText("视频源");
         sourceStatusView.setText("正在并发解析第 " + episode + " 集…");
         renderEpisodeSelector();
+        updateFullscreenControls();
         if (player != null) player.stop();
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("subject_name", subjectName);

@@ -44,4 +44,11 @@ public final class ImageLoader {
         }
         return instance;
     }
+
+    public static synchronized void clearMemoryCache() {
+        if (instance != null) {
+            instance.shutdown();
+            instance = null;
+        }
+    }
 }

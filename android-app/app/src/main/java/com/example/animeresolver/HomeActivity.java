@@ -801,7 +801,9 @@ public class HomeActivity extends Activity {
         View sourceRow = settingsRow("视频源管理", R.drawable.ic_search_24);
         sourceRow.setOnClickListener(v -> startActivity(new Intent(this, SourceManagementActivity.class)));
         page.addView(sourceRow);
-        page.addView(settingsRow("数据与缓存", R.drawable.ic_folder_outline_24));
+        View dataRow = settingsRow("数据与缓存", R.drawable.ic_folder_outline_24);
+        dataRow.setOnClickListener(v -> startActivity(new Intent(this, DataAndCacheActivity.class)));
+        page.addView(dataRow);
     }
 
     private View recentRow(

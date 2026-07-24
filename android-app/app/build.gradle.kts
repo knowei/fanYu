@@ -19,8 +19,8 @@ android {
         applicationId = "com.example.animeresolver"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
     }
 
     signingConfigs {
@@ -58,4 +58,5 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
     implementation("com.google.android.material:material:1.12.0")
+    testImplementation("junit:junit:4.13.2")
 }

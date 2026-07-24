@@ -962,6 +962,13 @@ public class MainActivity extends Activity {
 
     private boolean isChallengePage(HttpPage page) {
         String lower = page.html.toLowerCase(Locale.ROOT);
+        boolean cloudflareChallenge = lower.contains("cf-chl-")
+                || lower.contains("challenge-platform")
+                || lower.contains("cdn-cgi/challenge")
+                || lower.contains("just a moment");
+        boolean firstPartyCaptcha = lower.contains("verify-submit") && lower.contains("ds-verify");
+        // Do not mistake a site's preloaded Turnstile/verification code for an active challenge.
+        if (!cloudflareChallenge && !firstPartyCaptcha) return false;
         return lower.contains("cf-chl-") ||
                 lower.contains("challenge-platform") ||
                 lower.contains("cdn-cgi/challenge") ||
@@ -1276,6 +1283,9 @@ public class MainActivity extends Activity {
 
     private void broadcastSourceState(
             String sourceName, String status, String videoUrl, String error, String siteUrl) {
+        if (PlayerActivity.SOURCE_FAILED.equals(status)) {
+            DiagnosticStore.record(this, "source/" + stage.name(), sourceName, error, siteUrl);
+        }
         PlayerActivity.cacheSourceState(
                 requestedEpisode, sourceName, status, videoUrl, error, siteUrl);
         Intent update = new Intent(PlayerActivity.ACTION_SOURCE_RESULT);
@@ -1338,6 +1348,7 @@ public class MainActivity extends Activity {
     }
 
     private void fail(String message) {
+        DiagnosticStore.record(this, "resolve/" + stage.name(), requestedName, message, "");
         probeGeneration++;
         stage = Stage.IDLE;
         hideVerification();
