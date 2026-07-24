@@ -15,11 +15,12 @@ import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.google.android.material.button.MaterialButton;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -443,13 +444,25 @@ public class SourceManagementActivity extends Activity {
         return button;
     }
 
-    private ImageButton iconButton() {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(R.drawable.ic_arrow_back_24);
-        button.setColorFilter(INK);
-        button.setScaleType(ImageButton.ScaleType.CENTER);
-        button.setPadding(dp(11), dp(11), dp(11), dp(11));
-        button.setBackground(round(Color.rgb(244, 247, 252), 22, Color.TRANSPARENT, 0));
+    private MaterialButton iconButton() {
+        MaterialButton button = new MaterialButton(this);
+        button.setText("");
+        button.setIconResource(R.drawable.ic_arrow_back_24);
+        button.setIconTint(ColorStateList.valueOf(INK));
+        button.setIconSize(dp(24));
+        button.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_START);
+        button.setIconPadding(0);
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setPadding(dp(10), 0, dp(10), 0);
+        button.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+        button.setBackgroundColor(Color.TRANSPARENT);
+        button.setRippleColor(ColorStateList.valueOf(Color.argb(24, 20, 105, 245)));
+        button.setCornerRadius(dp(24));
+        button.setElevation(0f);
+        button.setStateListAnimator(null);
         return button;
     }
 

@@ -1,35 +1,38 @@
-# 番剧解析 Android 测试版
+# 番悠（FanYu）
 
-最小流程：
+一个面向番剧放送、索引与多视频源解析的 Android 应用。
 
-1. 输入番剧名称和集数；
-2. 后台 WebView 搜索作品；
-3. 读取详情页线路和指定集数；
-4. 加载播放页并读取 `player_aaaa` 或拦截媒体请求；
-5. 显示 m3u8/mp4 地址。
+## 功能
 
-WebView 会保存站点 Cookie。只有自动安全验证超过 12 秒仍未完成时，才显示验证页面。
+- 放送页支持周一至周日切换，并会显示已更新集数与放送时间。
+- 可在“我的 → 设置 → 索引数据源”选择：自动、Bangumi / AniList、AniFun。
+  - 自动：优先 AniFun；放送或搜索不可用时自动回退 Bangumi。
+  - Bangumi / AniList：使用 Bangumi 条目与 AniList 放送时间。
+  - AniFun：放送、搜索、详情均使用 AniFun；详情保留季度与已发布集数。
+- 视频播放使用统一的本地/订阅视频源解析流程，索引源不影响播放源选择。
+- 播放历史、收藏、倍速、手势控制和本地讨论区。
+- AniFun 封面会携带必要的图片请求头，以兼容其图片防盗链。
 
-构建调试包：
+## 视频源管理
+
+- `css1.json` 是只读订阅源，应用不会修改它。
+- 在“我的 → 视频源管理”可添加、编辑、测试本地源，并完成站点验证。
+- 支持导入/导出 `fanyu-source-rules.json`；导入时按规则 ID 或搜索地址合并，不会覆盖订阅源。
+
+## 构建
+
+调试包：
 
 ```powershell
-$env:JAVA_HOME='D:\environ\Java\jdk-17'
-$env:ANDROID_HOME='D:\environ\androidsdk'
+$env:JAVA_HOME='D:\environ\Java\jdk-21'
 .\package-app.ps1 -BuildType debug
 ```
 
-打包签名正式版（默认）：
+签名正式包（默认）：
 
 ```powershell
+$env:JAVA_HOME='D:\environ\Java\jdk-21'
 .\package-app.ps1
 ```
 
-脚本会读取 `app/build.gradle.kts` 中的版本号，并将 APK 复制到 `releases` 目录，同时输出 SHA256。
-
-视频源管理：
-
-- `css1.json` 作为只读订阅源，不会被 App 修改；
-- “我的 → 视频源管理 → 添加”可以创建本地源；
-- 输入网站首页或搜索地址后，可尝试自动识别搜索结果和选集结构；
-- 自动探测失败时仍可手动填写 CSS 选择器；需要验证码的网站应先在 App 内人工验证。
-- “导出规则”会生成 `fanyu-source-rules.json`；“导入规则”会校验后按规则 ID 或搜索地址合并，不会覆盖 `css1.json`。
+脚本会读取 `app/build.gradle.kts` 中的版本号，将 APK 复制到 `releases`，并输出 SHA256。

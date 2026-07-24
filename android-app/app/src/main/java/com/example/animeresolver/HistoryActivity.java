@@ -169,7 +169,7 @@ public class HistoryActivity extends Activity {
         poster.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         String cover = item.optString("cover");
-        if (!cover.isBlank()) Picasso.get().load(largeImage(cover)).fit().centerCrop().into(image);
+        if (!cover.isBlank()) ImageLoader.with(this).load(largeImage(cover)).fit().centerCrop().into(image);
 
         ProgressBar progress = new ProgressBar(this, null,
                 android.R.attr.progressBarStyleHorizontal);

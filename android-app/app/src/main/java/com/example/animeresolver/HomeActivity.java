@@ -54,6 +54,8 @@ import okhttp3.Response;
 public class HomeActivity extends Activity {
     private static final String BANGUMI_BASE = "https://bgm.liwen.icu";
     private static final String ANILIST_GRAPHQL = "https://graphql.anilist.co";
+    private static final String ANIFUN_WEEKLY = "https://api.anifun.cn/ac/v1/wiki/anime/week_schedule/index";
+    private static final String ANIFUN_SEARCH = "https://api.anifun.cn/ac/v1/search/module-and-news";
     private static final int BLUE = Color.rgb(25, 112, 243);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
@@ -66,6 +68,7 @@ public class HomeActivity extends Activity {
     private Button broadcastTab;
     private Button myTab;
     private final Map<Integer, String> updateTimes = new HashMap<>();
+    private String activeIndexSource = "";
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
@@ -82,6 +85,7 @@ public class HomeActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (myTab != null && myTab.isSelected()) showMyPage();
+        else if (broadcastTab != null && !IndexSourceStore.get(this).equals(activeIndexSource)) showBroadcastPage();
     }
 
     private TextView label(String value, float size, int color, boolean bold) {
@@ -199,7 +203,7 @@ public class HomeActivity extends Activity {
         TextView broadcastTitle = label("今日放送", 22, INK, true);
         titleRow.addView(broadcastTitle,
                 new LinearLayout.LayoutParams(0, dp(52), 1));
-        TextView source = label("Bangumi 索引", 13, BLUE, false);
+        TextView source = label(IndexSourceStore.displayName(this) + " 索引", 13, BLUE, false);
         source.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         titleRow.addView(source, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(52)));
@@ -210,12 +214,12 @@ public class HomeActivity extends Activity {
                     : date.getMonthValue() + "月" + date.getDayOfMonth() + "日放送");
             showBroadcastLoading(list, date.equals(today) ? "正在同步今日放送…"
                     : "正在读取" + shortWeekday(date) + "的放送安排…");
-            fetchCalendar(list, date, date.equals(today) ? "今日" : shortWeekday(date));
+            fetchBroadcast(list, date, date.equals(today) ? "今日" : shortWeekday(date));
         }), matchWrap(dp(76), 0, 0, 18));
         page.addView(titleRow);
         showBroadcastLoading(list, "正在同步今日放送…");
         page.addView(list);
-        fetchCalendar(list, today, "今日");
+        fetchBroadcast(list, today, "今日");
     }
 
     private void showBroadcastLoading(LinearLayout target, String message) {
@@ -309,6 +313,10 @@ public class HomeActivity extends Activity {
                     item.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
                     item.setBackground(selected ? roundedRect(Color.rgb(235, 243, 255), 10) : null);
                 }
+                if (!date.equals(monday)) {
+                    scroll.post(() -> scroll.smoothScrollTo(Math.max(0,
+                            day.getLeft() - (scroll.getWidth() - day.getWidth()) / 2), 0));
+                }
                 onSelect.accept(date);
             });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(74), dp(68));
@@ -316,6 +324,14 @@ public class HomeActivity extends Activity {
             rail.addView(day, params);
         }
         scroll.addView(rail);
+        if (!today.equals(monday)) {
+            int selectedIndex = today.getDayOfWeek().getValue() - 1;
+            scroll.post(() -> {
+                View selected = rail.getChildAt(selectedIndex);
+                if (selected != null) scroll.scrollTo(Math.max(0,
+                        selected.getLeft() - (scroll.getWidth() - selected.getWidth()) / 2), 0);
+            });
+        }
         return scroll;
     }
 
@@ -324,6 +340,15 @@ public class HomeActivity extends Activity {
         drawable.setColor(color);
         drawable.setCornerRadius(dp(radius));
         return drawable;
+    }
+
+    private void fetchBroadcast(LinearLayout target, LocalDate date, String badge) {
+        activeIndexSource = IndexSourceStore.get(this);
+        if (IndexSourceStore.BANGUMI.equals(activeIndexSource)) {
+            fetchCalendar(target, date, badge);
+        } else {
+            fetchAniFunCalendar(target, date, badge);
+        }
     }
 
     private void fetchCalendar(LinearLayout target, LocalDate date, String badge) {
@@ -347,6 +372,56 @@ public class HomeActivity extends Activity {
                         fetchCalendar(target, date, badge)));
             }
         });
+    }
+
+    private void fetchAniFunCalendar(LinearLayout target, LocalDate date, String badge) {
+        executor.execute(() -> {
+            try {
+                Request request = new Request.Builder()
+                        .url(ANIFUN_WEEKLY)
+                        .header("Content-Type", "application/json")
+                        .post(RequestBody.create("{}", MediaType.get("application/json")))
+                        .build();
+                JSONObject root = new JSONObject(execute(request));
+                JSONArray weeks = root.optJSONArray("data");
+                if (root.optInt("code", -1) != 0 || weeks == null) throw new IOException("AniFun response unavailable");
+                int weekday = date.getDayOfWeek().getValue();
+                JSONObject group = weeks.optJSONObject(weekday - 1);
+                JSONArray animations = group == null ? null : group.optJSONArray("animations");
+                if (animations == null || animations.length() == 0) throw new IOException("AniFun schedule empty");
+                List<Subject> subjects = parseAniFunSubjects(animations, 24);
+                if (subjects.isEmpty()) throw new IOException("AniFun schedule empty");
+                runOnUiThread(() -> renderSubjects(target, subjects, false, badge));
+            } catch (Exception error) {
+                // Both Auto and AniFun modes intentionally degrade to the stable Bangumi index.
+                fetchCalendar(target, date, badge);
+            }
+        });
+    }
+
+    private List<Subject> parseAniFunSubjects(JSONArray array, int limit) {
+        List<Subject> result = new ArrayList<>();
+        for (int i = 0; i < Math.min(array.length(), limit); i++) {
+            JSONObject item = array.optJSONObject(i);
+            if (item == null) continue;
+            String name = item.optString("name").trim();
+            if (name.isEmpty()) continue;
+            int played = item.optInt("playedEpisodes", 0);
+            int total = item.optInt("totalEpisodes", 0);
+            JSONObject next = item.optJSONObject("nextEpisode");
+            long release = next == null ? 0L : next.optLong("releaseTime", 0L);
+            String update = formatAniFunUpdate(release, played, total);
+            result.add(new Subject(0, name, name, item.optString("thumbnail"), 0, update,
+                    IndexSourceStore.ANIFUN, item.optInt("moduleId", 0), item.optString("id")));
+        }
+        return result;
+    }
+
+    private String formatAniFunUpdate(long releaseTime, int played, int total) {
+        String episodes = total > 0 ? "已更新 " + played + "/" + total : "已更新 " + played + " 集";
+        if (releaseTime <= 0L) return episodes;
+        LocalTime time = Instant.ofEpochSecond(releaseTime).atZone(ZoneId.of("Asia/Shanghai")).toLocalTime();
+        return String.format(Locale.CHINA, "%02d:%02d · %s", time.getHour(), time.getMinute(), episodes);
     }
 
     private List<Subject> parseLegacySubjects(JSONArray array, int limit) {
@@ -436,7 +511,7 @@ public class HomeActivity extends Activity {
         cover.setBackgroundColor(Color.rgb(238, 240, 244));
         row.addView(cover, new LinearLayout.LayoutParams(dp(88), dp(126)));
         if (!subject.image.isBlank()) {
-            Picasso.get().load(listImage(subject.image)).fit().centerCrop().into(cover);
+            ImageLoader.with(this).load(listImage(subject.image)).fit().centerCrop().into(cover);
         }
 
         LinearLayout info = new LinearLayout(this);
@@ -452,8 +527,10 @@ public class HomeActivity extends Activity {
         }
         String score = subject.score > 0 ? String.format(Locale.CHINA, "★ %.1f · Bangumi", subject.score)
                 : "Bangumi 条目";
+        if (IndexSourceStore.ANIFUN.equals(subject.indexSource)) score = "AniFun 条目";
         info.addView(label(score, 13, BLUE, false), matchWrap(0, 0, 9, 0));
         String update = updateTimes.get(subject.id);
+        if ((update == null || update.isBlank()) && subject.id == 0) update = subject.marker;
         if (update != null && !update.isBlank()) {
             info.addView(label(update, 12, MUTED, false), matchWrap(0, 0, 6, 0));
         }
@@ -559,6 +636,11 @@ public class HomeActivity extends Activity {
         results.addView(new ProgressBar(this), matchWrap(dp(72), 0, 0, 0));
         page.addView(results);
 
+        if (!IndexSourceStore.BANGUMI.equals(IndexSourceStore.get(this))) {
+            searchAniFun(keyword, results);
+            return;
+        }
+
         executor.execute(() -> {
             try {
                 JSONObject body = new JSONObject();
@@ -575,6 +657,64 @@ public class HomeActivity extends Activity {
                 List<Subject> subjects = parseV0Subjects(data == null ? new JSONArray() : data);
                 runOnUiThread(() -> renderSubjects(results, subjects, true));
             } catch (Exception e) {
+                runOnUiThread(() -> showError(results, "搜索失败，点击重试", () -> searchSubjects(keyword)));
+            }
+        });
+    }
+
+    private void searchAniFun(String keyword, LinearLayout results) {
+        executor.execute(() -> {
+            try {
+                JSONObject page = new JSONObject();
+                page.put("num", 1);
+                page.put("size", 20);
+                JSONObject body = new JSONObject();
+                body.put("keywords", keyword);
+                body.put("type", "ac");
+                body.put("page", page);
+                Request request = new Request.Builder().url(ANIFUN_SEARCH)
+                        .post(RequestBody.create(body.toString(), MediaType.get("application/json")))
+                        .build();
+                JSONObject data = new JSONObject(execute(request)).optJSONObject("data");
+                JSONArray rows = data == null ? null : data.optJSONArray("rows");
+                List<Subject> subjects = parseAniFunSearch(rows == null ? new JSONArray() : rows);
+                if (subjects.isEmpty()) throw new IOException("AniFun search empty");
+                runOnUiThread(() -> renderSubjects(results, subjects, true));
+            } catch (Exception ignored) {
+                searchBangumiFallback(keyword, results);
+            }
+        });
+    }
+
+    private List<Subject> parseAniFunSearch(JSONArray rows) {
+        List<Subject> result = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            JSONObject module = row == null ? null : row.optJSONObject("module");
+            if (module == null || !"ac".equals(module.optString("type"))) continue;
+            String name = module.optString("name").trim();
+            int moduleId = module.optInt("id", 0);
+            if (name.isEmpty() || moduleId <= 0) continue;
+            result.add(new Subject(0, name, name, module.optString("thumbnail"), 0, "AniFun 条目",
+                    IndexSourceStore.ANIFUN, moduleId, ""));
+        }
+        return result;
+    }
+
+    private void searchBangumiFallback(String keyword, LinearLayout results) {
+        executor.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("keyword", keyword);
+                JSONObject filter = new JSONObject();
+                filter.put("type", new JSONArray().put(2));
+                body.put("filter", filter);
+                Request request = new Request.Builder().url(BANGUMI_BASE + "/v0/search/subjects?limit=20&offset=0")
+                        .post(RequestBody.create(body.toString(), MediaType.get("application/json"))).build();
+                JSONArray data = new JSONObject(execute(request)).optJSONArray("data");
+                List<Subject> subjects = parseV0Subjects(data == null ? new JSONArray() : data);
+                runOnUiThread(() -> renderSubjects(results, subjects, true));
+            } catch (Exception error) {
                 runOnUiThread(() -> showError(results, "搜索失败，点击重试", () -> searchSubjects(keyword)));
             }
         });
@@ -599,6 +739,9 @@ public class HomeActivity extends Activity {
         intent.putExtra("subject_name", subject.name);
         intent.putExtra("subject_cover", subject.image);
         intent.putExtra("bangumi_id", subject.id);
+        intent.putExtra("index_source", subject.indexSource);
+        intent.putExtra("anifun_module_id", subject.anifunModuleId);
+        intent.putExtra("anifun_season_id", subject.anifunSeasonId);
         startActivity(intent);
     }
 
@@ -611,6 +754,7 @@ public class HomeActivity extends Activity {
         header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
         TextView settings = label("设置", 14, MUTED, false);
         settings.setGravity(Gravity.CENTER);
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
         header.addView(settings, new LinearLayout.LayoutParams(dp(54), dp(48)));
         page.addView(header, matchWrap(dp(48), 0, 0, 22));
         android.content.SharedPreferences prefs = getSharedPreferences("watching", MODE_PRIVATE);
@@ -677,7 +821,7 @@ public class HomeActivity extends Activity {
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
         cover.setBackgroundColor(Color.rgb(238, 240, 244));
         row.addView(cover, new LinearLayout.LayoutParams(dp(72), dp(98)));
-        if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
+        if (!coverUrl.isBlank()) ImageLoader.with(this).load(listImage(coverUrl)).fit().centerCrop().into(cover);
         LinearLayout info = new LinearLayout(this);
         info.setOrientation(LinearLayout.VERTICAL);
         info.setPadding(dp(14), 0, 0, 0);
@@ -719,7 +863,7 @@ public class HomeActivity extends Activity {
             cover.setBackgroundColor(Color.rgb(238, 240, 244));
             card.addView(cover, new LinearLayout.LayoutParams(
                     dp(90), dp(120)));
-            if (!coverUrl.isBlank()) Picasso.get().load(listImage(coverUrl)).fit().centerCrop().into(cover);
+            if (!coverUrl.isBlank()) ImageLoader.with(this).load(listImage(coverUrl)).fit().centerCrop().into(cover);
             TextView title = label(name, 13, INK, true);
             title.setMaxLines(1);
             card.addView(title, new LinearLayout.LayoutParams(dp(90), dp(30)));
@@ -828,5 +972,10 @@ public class HomeActivity extends Activity {
         super.onDestroy();
     }
 
-    private record Subject(int id, String name, String original, String image, double score, String marker) {}
+    private record Subject(int id, String name, String original, String image, double score, String marker,
+                           String indexSource, int anifunModuleId, String anifunSeasonId) {
+        private Subject(int id, String name, String original, String image, double score, String marker) {
+            this(id, name, original, image, score, marker, IndexSourceStore.BANGUMI, 0, "");
+        }
+    }
 }

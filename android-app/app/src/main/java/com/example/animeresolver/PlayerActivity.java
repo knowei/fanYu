@@ -365,7 +365,7 @@ public class PlayerActivity extends Activity {
         if ((videoUrl == null || videoUrl.isBlank()) && !subjectCover.isBlank()) {
             previewImage = new ImageView(this);
             previewImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            Picasso.get().load(subjectCover).fit().centerCrop().into(previewImage);
+            ImageLoader.with(this).load(subjectCover).fit().centerCrop().into(previewImage);
             videoFrame.addView(previewImage, new android.widget.FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }

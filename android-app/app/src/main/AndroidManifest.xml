@@ -14,6 +14,7 @@
         <activity android:name=".SiteVerificationActivity" />
         <activity android:name=".SourceManagementActivity" />
         <activity android:name=".SourceEditorActivity" />
+        <activity android:name=".SettingsActivity" />
         <activity android:name=".DetailActivity" />
         <activity android:name=".HistoryActivity" />
         <activity android:name=".PlayerActivity"

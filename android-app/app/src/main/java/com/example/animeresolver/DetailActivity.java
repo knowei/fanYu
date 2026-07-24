@@ -31,17 +31,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import okhttp3.OkHttpClient;
+import okhttp3.MediaType;
 import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public class DetailActivity extends Activity {
     private static final int EPISODES_PER_RANGE = 12;
     private static final int RANGES_PER_GROUP = 10;
     private static final String BASE = "https://bgm.liwen.icu";
+    private static final String ANIFUN_DETAIL = "https://api.anifun.cn/ac/v1/module/aggs/detail";
     private static final int BLUE = Color.rgb(20, 105, 245);
     private static final int INK = Color.rgb(21, 24, 29);
     private static final int MUTED = Color.rgb(104, 108, 116);
@@ -53,6 +58,9 @@ public class DetailActivity extends Activity {
     private LinearLayout content;
     private MaterialButton favoriteButton;
     private int subjectId;
+    private String indexSource = IndexSourceStore.BANGUMI;
+    private int anifunModuleId;
+    private String anifunSeasonId = "";
     private int selectedEpisode = 1;
     private String subjectName = "";
     private String subjectCover = "";
@@ -74,12 +82,18 @@ public class DetailActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         subjectId = getIntent().getIntExtra("bangumi_id", 0);
+        indexSource = getIntent().getStringExtra("index_source");
+        anifunModuleId = getIntent().getIntExtra("anifun_module_id", 0);
+        anifunSeasonId = getIntent().getStringExtra("anifun_season_id");
+        if (indexSource == null) indexSource = IndexSourceStore.BANGUMI;
+        if (anifunSeasonId == null) anifunSeasonId = "";
         subjectName = getIntent().getStringExtra("subject_name");
         subjectCover = getIntent().getStringExtra("subject_cover");
         if (subjectName == null) subjectName = "番剧详情";
         if (subjectCover == null) subjectCover = "";
         buildShell();
-        if (subjectId > 0) loadDetail(); else renderFallback();
+        if (IndexSourceStore.ANIFUN.equals(indexSource) && anifunModuleId > 0) loadAniFunDetail();
+        else if (subjectId > 0) loadDetail(); else resolveBangumiDetail();
     }
 
     private TextView text(String value, float size, int color, boolean bold) {
@@ -226,6 +240,135 @@ public class DetailActivity extends Activity {
         });
     }
 
+    private void loadAniFunDetail() {
+        executor.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("id", anifunModuleId);
+                body.put("submoduleID", "anime");
+                body.put("args", new JSONObject());
+                Request request = new Request.Builder().url(ANIFUN_DETAIL)
+                        .post(RequestBody.create(body.toString(), MediaType.get("application/json")))
+                        .build();
+                JSONObject root = new JSONObject(execute(request));
+                JSONObject data = root.optJSONObject("data");
+                if (root.optInt("code", -1) != 0 || data == null) throw new IOException("AniFun detail unavailable");
+                JSONObject normalized = normalizeAniFunDetail(data);
+                runOnUiThread(() -> render(normalized));
+            } catch (Exception ignored) {
+                runOnUiThread(this::renderFallback);
+            }
+        });
+    }
+
+    private JSONObject normalizeAniFunDetail(JSONObject data) throws Exception {
+        JSONObject main = data.optJSONObject("data") == null ? null : data.optJSONObject("data").optJSONObject("main");
+        JSONArray seasons = main == null ? null : main.optJSONArray("data");
+        JSONObject season = pickAniFunSeason(seasons);
+        if (season == null) throw new IOException("AniFun anime season unavailable");
+        JSONArray episodes = season.optJSONArray("episodes");
+        ArrayList<String> titles = new ArrayList<>();
+        int aired = 0;
+        long now = Instant.now().getEpochSecond();
+        if (episodes != null) {
+            for (int i = 0; i < episodes.length(); i++) {
+                JSONObject episode = episodes.optJSONObject(i);
+                if (episode == null) continue;
+                titles.add(episode.optString("name"));
+                long releaseTime = episode.optLong("releaseTime", 0L);
+                if (releaseTime > 0L && releaseTime <= now) aired = i + 1;
+            }
+        }
+        synchronized (episodeTitles) {
+            episodeTitles.clear();
+            episodeTitles.addAll(titles);
+        }
+        JSONObject title = season.optJSONObject("seo");
+        String seasonName = title == null ? "" : title.optString("title").trim();
+        if (seasonName.isEmpty()) seasonName = season.optString("name", data.optString("name"));
+        JSONObject images = new JSONObject();
+        images.put("large", season.optString("thumbnail", data.optString("thumbnail", subjectCover)));
+        JSONObject rating = new JSONObject();
+        JSONObject scoreInfo = season.optJSONObject("scoreInfo");
+        rating.put("score", scoreInfo == null ? 0 : scoreInfo.optDouble("score", 0));
+        JSONObject normalized = new JSONObject();
+        normalized.put("name_cn", seasonName);
+        normalized.put("name", data.optString("name", seasonName));
+        normalized.put("summary", title == null ? data.optString("description")
+                : title.optString("description", data.optString("description")));
+        normalized.put("images", images);
+        normalized.put("rating", rating);
+        normalized.put("total_episodes", titles.size());
+        normalized.put("available_episodes", aired);
+        normalized.put("platform", "AniFun 索引");
+        subjectId = anifunModuleId;
+        return normalized;
+    }
+
+    private JSONObject pickAniFunSeason(JSONArray seasons) {
+        if (seasons == null) return null;
+        JSONObject latest = null;
+        long latestTime = Long.MIN_VALUE;
+        for (int i = 0; i < seasons.length(); i++) {
+            JSONObject item = seasons.optJSONObject(i);
+            if (item == null) continue;
+            if (!anifunSeasonId.isBlank() && anifunSeasonId.equals(item.optString("id"))) return item;
+            if (item.optLong("releaseTime", 0) > latestTime) {
+                latestTime = item.optLong("releaseTime", 0);
+                latest = item;
+            }
+        }
+        return latest;
+    }
+
+    /** AniFun cards do not carry a Bangumi id. Resolve it before using the shared detail UI. */
+    private void resolveBangumiDetail() {
+        executor.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("keyword", subjectName);
+                JSONObject filter = new JSONObject();
+                filter.put("type", new JSONArray().put(2));
+                body.put("filter", filter);
+                Request request = new Request.Builder()
+                        .url(BASE + "/v0/search/subjects?limit=10&offset=0")
+                        .post(RequestBody.create(body.toString(), MediaType.get("application/json")))
+                        .build();
+                JSONArray matches = new JSONObject(execute(request)).optJSONArray("data");
+                JSONObject match = bestBangumiMatch(matches);
+                if (match == null || match.optInt("id", 0) <= 0) throw new IOException("No Bangumi match");
+                subjectId = match.optInt("id");
+                String chinese = match.optString("name_cn").trim();
+                if (!chinese.isEmpty()) subjectName = chinese;
+                JSONObject images = match.optJSONObject("images");
+                if (images != null && subjectCover.isBlank()) {
+                    subjectCover = proxyImage(images.optString("large", images.optString("common", "")));
+                }
+                loadDetail();
+            } catch (Exception ignored) {
+                runOnUiThread(this::renderFallback);
+            }
+        });
+    }
+
+    private JSONObject bestBangumiMatch(JSONArray matches) {
+        if (matches == null || matches.length() == 0) return null;
+        String wanted = normalizeTitle(subjectName);
+        JSONObject first = matches.optJSONObject(0);
+        for (int i = 0; i < matches.length(); i++) {
+            JSONObject item = matches.optJSONObject(i);
+            if (item == null) continue;
+            if (wanted.equals(normalizeTitle(item.optString("name_cn")))
+                    || wanted.equals(normalizeTitle(item.optString("name")))) return item;
+        }
+        return first;
+    }
+
+    private String normalizeTitle(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9\\p{IsHan}ぁ-んァ-ヶ]", "");
+    }
+
     private void renderFallback() {
         JSONObject fallback = new JSONObject();
         try {
@@ -269,7 +412,7 @@ public class DetailActivity extends Activity {
         cover.setClipToOutline(true);
         cover.setBackground(rounded(Color.rgb(235, 238, 243), 10, 0, 0));
         hero.addView(cover, new LinearLayout.LayoutParams(dp(146), dp(218)));
-        if (!subjectCover.isBlank()) Picasso.get().load(subjectCover).fit().centerCrop().into(cover);
+        if (!subjectCover.isBlank()) ImageLoader.with(this).load(subjectCover).fit().centerCrop().into(cover);
 
         LinearLayout meta = new LinearLayout(this);
         meta.setOrientation(LinearLayout.VERTICAL);
@@ -623,7 +766,11 @@ public class DetailActivity extends Activity {
     }
 
     private String get(String url) throws IOException {
-        try (Response response = client.newCall(new Request.Builder().url(url).build()).execute()) {
+        return execute(new Request.Builder().url(url).build());
+    }
+
+    private String execute(Request request) throws IOException {
+        try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("HTTP " + response.code());
             return response.body().string();
         }
