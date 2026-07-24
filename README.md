@@ -1,5 +1,9 @@
 # Anime Video Resolver
 
+## 番遇 Android
+
+Android 客户端当前支持 Bangumi / AniList 与 AniFun 索引、多站点并发解析、站点验证、播放历史及规则导入导出。视频源会根据本机积累的解析成功率、响应时间和可识别清晰度动态排序，并在播放器中标记智能推荐线路。应用每天最多自动检查一次 `knowei/fanYu` 的 GitHub Releases，也可以在“设置”中手动检查更新。
+
 输入番剧名称和集数，程序会：
 
 1. 在配置的网站搜索番剧；

@@ -77,7 +77,20 @@ public class SettingsActivity extends Activity {
         body.addView(choices, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView detail = text("详情页会按作品标题优先匹配 Bangumi 条目，从而复用现有简介、集数与播放流程。", 13, MUTED, false);
         detail.setLineSpacing(dp(3), 1f);
-        body.addView(detail, margin(0, dp(18), 0, 0));
+        body.addView(detail, margin(0, dp(18), 0, dp(30)));
+
+        body.addView(text("版本更新", 20, INK, true));
+        TextView version = text("当前版本 " + UpdateChecker.currentVersion(this)
+                + " · 自动检查每日最多一次", 14, MUTED, false);
+        body.addView(version, margin(0, dp(9), 0, dp(14)));
+        MaterialButton checkUpdate = new MaterialButton(this);
+        checkUpdate.setText("检查 GitHub 更新");
+        checkUpdate.setTextColor(Color.WHITE);
+        checkUpdate.setBackgroundTintList(ColorStateList.valueOf(BLUE));
+        checkUpdate.setCornerRadius(dp(14));
+        checkUpdate.setOnClickListener(v -> UpdateChecker.check(this, true));
+        body.addView(checkUpdate, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         scroll.addView(body);
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         SystemBars.apply(this, root, WARM);

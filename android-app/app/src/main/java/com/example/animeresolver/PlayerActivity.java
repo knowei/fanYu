@@ -1276,8 +1276,13 @@ public class PlayerActivity extends Activity {
                 new java.util.ArrayList<>(sourceStates.entrySet());
         ordered.sort(java.util.Comparator.comparingInt(entry -> sourceRank(
                 entry.getKey(), entry.getValue())));
+        String recommendedSource = SourceMetricsStore.recommended(this, sourceStates.keySet());
+        boolean recommendationShown = false;
         for (Map.Entry<String, SourceState> entry : ordered) {
-            sourceListContainer.addView(sourceRow(entry.getKey(), entry.getValue()));
+            boolean recommended = !recommendationShown && !recommendedSource.isBlank()
+                    && recommendedSource.equals(SourceMetricsStore.baseName(entry.getKey()));
+            sourceListContainer.addView(sourceRow(entry.getKey(), entry.getValue(), recommended));
+            if (recommended) recommendationShown = true;
         }
         ScrollView scroll = sourceScrollView;
         if (keepTop && scroll != null) {
@@ -1287,12 +1292,12 @@ public class PlayerActivity extends Activity {
 
     private int sourceRank(String name, SourceState state) {
         if (name.equals(currentSourceName)) return 0;
-        if (SOURCE_READY.equals(state.status)) return 1;
-        if (SOURCE_LOADING.equals(state.status)) return 2;
-        return 3;
+        int statusRank = SOURCE_READY.equals(state.status) ? 1
+                : SOURCE_LOADING.equals(state.status) ? 2 : 3;
+        return statusRank * 10_000 + SourceMetricsStore.displayPriority(this, name);
     }
 
-    private View sourceRow(String name, SourceState state) {
+    private View sourceRow(String name, SourceState state, boolean recommended) {
         boolean current = name.equals(currentSourceName);
         boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
         boolean retryable = SOURCE_FAILED.equals(state.status) && !state.url.isBlank();
@@ -1349,6 +1354,7 @@ public class PlayerActivity extends Activity {
             detailColor = Color.rgb(190, 52, 60);
         }
         if (!channelName.isBlank()) detail = channelName + " · " + detail;
+        if (recommended) detail = "智能推荐 · " + detail;
         TextView detailView = text(detail, 13, detailColor, false);
         detailView.setMaxLines(1);
         detailView.setEllipsize(TextUtils.TruncateAt.END);

@@ -79,6 +79,7 @@ public class HomeActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildShell();
         showBroadcastPage();
+        UpdateChecker.check(this, false);
     }
 
     @Override

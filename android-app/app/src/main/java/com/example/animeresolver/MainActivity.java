@@ -347,6 +347,8 @@ public class MainActivity extends Activity {
                 List<SourceConfig> sources = parseSourceConfigs(subscription.html);
                 addLocalSources(sources);
                 if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
+                sources.sort((left, right) -> SourceMetricsStore.compare(this,
+                        left.name, left.tier, right.name, right.tier));
 
                 java.util.LinkedHashMap<String, String> sourceSearchUrls =
                         new java.util.LinkedHashMap<>();
@@ -364,9 +366,17 @@ public class MainActivity extends Activity {
                 CompletionService<SourceAttempt> completion =
                         new ExecutorCompletionService<>(networkExecutor);
                 AtomicBoolean delivered = new AtomicBoolean(false);
-                for (SourceConfig source : sources) {
+                for (int sourceIndex = 0; sourceIndex < sources.size(); sourceIndex++) {
+                    SourceConfig source = sources.get(sourceIndex);
+                    int priorityIndex = sourceIndex;
                     completion.submit(() -> {
+                        long startedAt = 0L;
+                        AtomicBoolean metricRecorded = new AtomicBoolean(false);
                         try {
+                            long headStartDelay = Math.min(600L, priorityIndex * 60L);
+                            if (headStartDelay > 0) Thread.sleep(headStartDelay);
+                            startedAt = android.os.SystemClock.elapsedRealtime();
+                            long sourceStartedAt = startedAt;
                             int resolvedCount = resolveSource(source, generation,
                                     new SourceProgress() {
                                         @Override
@@ -383,6 +393,14 @@ public class MainActivity extends Activity {
 
                                         @Override
                                         public void onReady(ResolveResult result) {
+                                            if (metricRecorded.compareAndSet(false, true)) {
+                                                SourceMetricsStore.recordSuccess(MainActivity.this,
+                                                        source.name,
+                                                        android.os.SystemClock.elapsedRealtime()
+                                                                - sourceStartedAt,
+                                                        result.videoUrl + " "
+                                                                + source.defaultResolution);
+                                            }
                                             broadcastSourceState(result.source,
                                                     PlayerActivity.SOURCE_READY,
                                                     result.videoUrl, "", result.episodeUrl);
@@ -406,10 +424,19 @@ public class MainActivity extends Activity {
                                                     "", error, candidate.episodeUrl);
                                         }
                                     });
+                            if (resolvedCount == 0 && metricRecorded.compareAndSet(false, true)) {
+                                SourceMetricsStore.recordFailure(MainActivity.this, source.name,
+                                        android.os.SystemClock.elapsedRealtime() - sourceStartedAt);
+                            }
                             return new SourceAttempt(source.name,
                                     sourceSearchUrls.get(source.name),
                                     resolvedCount, "");
                         } catch (Exception exception) {
+                            if (metricRecorded.compareAndSet(false, true)) {
+                                SourceMetricsStore.recordFailure(MainActivity.this, source.name,
+                                        startedAt == 0L ? 45_000L
+                                                : android.os.SystemClock.elapsedRealtime() - startedAt);
+                            }
                             String message = exception.getMessage();
                             return new SourceAttempt(source.name,
                                     sourceSearchUrls.get(source.name), 0,
@@ -438,6 +465,7 @@ public class MainActivity extends Activity {
                 }
                 for (SourceConfig source : sources) {
                     if (!completedSources.contains(source.name)) {
+                        SourceMetricsStore.recordFailure(this, source.name, 45_000L);
                         broadcastSourceState(source.name, PlayerActivity.SOURCE_FAILED,
                                 "", "解析超时", sourceSearchUrls.get(source.name));
                     }
@@ -533,6 +561,8 @@ public class MainActivity extends Activity {
                     episodeSelector,
                     episodeLinkSelector,
                     episodeNamePattern,
+                    search.optString("defaultResolution",
+                            arguments.optString("defaultResolution")),
                     arguments.optInt("tier", 99)
             ));
         }
@@ -549,7 +579,7 @@ public class MainActivity extends Activity {
             sources.add(new SourceConfig(local.name, local.searchUrl, "a",
                     local.subjectSelector, "", "index-grouped", local.channelSelector,
                     "", local.episodeContainer, local.episodeSelector, "",
-                    "第\\s*(?<ep>.+)\\s*[话集]", local.tier));
+                    "第\\s*(?<ep>.+)\\s*[话集]", "", local.tier));
         }
         sources.sort(Comparator.comparingInt(source -> source.tier));
     }
@@ -1019,6 +1049,7 @@ public class MainActivity extends Activity {
             String episodeSelector,
             String episodeLinkSelector,
             String episodeNamePattern,
+            String defaultResolution,
             int tier
     ) {
     }
