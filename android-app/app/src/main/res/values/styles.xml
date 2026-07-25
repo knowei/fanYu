@@ -2,13 +2,13 @@
 <resources>
     <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="colorPrimary">#37713D</item>
-        <item name="colorPrimaryContainer">#D4E8D0</item>
+        <item name="colorPrimary">#2F6FED</item>
+        <item name="colorPrimaryContainer">#EAF2FF</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#52634F</item>
-        <item name="android:colorAccent">#37713D</item>
-        <item name="android:navigationBarColor">#F8FAF4</item>
-        <item name="android:statusBarColor">#F8FAF4</item>
+        <item name="colorSecondary">#4B638A</item>
+        <item name="android:colorAccent">#2F6FED</item>
+        <item name="android:navigationBarColor">#FAFCFF</item>
+        <item name="android:statusBarColor">#FAFCFF</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActivityTransitions">true</item>

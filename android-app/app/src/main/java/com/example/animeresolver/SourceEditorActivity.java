@@ -37,7 +37,7 @@ import okhttp3.Response;
 public class SourceEditorActivity extends Activity {
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
@@ -71,7 +71,7 @@ public class SourceEditorActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(10), dp(18), dp(14));
-        root.setBackgroundColor(Color.rgb(253, 252, 250));
+        root.setBackgroundColor(Color.rgb(250, 252, 255));
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         ImageButton back = iconButton();
@@ -100,9 +100,9 @@ public class SourceEditorActivity extends Activity {
         form.addView(probeStatus, margins(-1, -2, 0, 0, 18));
 
         TextView modeHint = text("普通模式只需要填写名称和网站地址，再运行自动探测。", 13,
-                Color.rgb(69, 91, 69), true);
+                Color.rgb(55, 82, 130), true);
         modeHint.setPadding(dp(12), dp(9), dp(12), dp(9));
-        modeHint.setBackground(round(Color.rgb(237, 246, 234), 12,
+        modeHint.setBackground(round(Color.rgb(234, 242, 255), 12,
                 Color.TRANSPARENT, 0));
         form.addView(modeHint, margins(-1, -2, 0, 0, 12));
 
@@ -138,7 +138,7 @@ public class SourceEditorActivity extends Activity {
         form.addView(save, margins(-1, dp(50), 0, 10, 0));
         scroll.addView(form, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
+        SystemBars.apply(this, root, Color.rgb(250, 252, 255));
         setContentView(root);
     }
 
@@ -362,8 +362,8 @@ public class SourceEditorActivity extends Activity {
         button.setMinHeight(0);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
-        button.setBackground(round(primary ? BLUE : Color.rgb(237, 246, 234), 11,
-                primary ? Color.TRANSPARENT : Color.rgb(202, 224, 198), primary ? 0 : 1));
+        button.setBackground(round(primary ? BLUE : Color.rgb(234, 242, 255), 11,
+                primary ? Color.TRANSPARENT : Color.rgb(191, 211, 255), primary ? 0 : 1));
         return button;
     }
 

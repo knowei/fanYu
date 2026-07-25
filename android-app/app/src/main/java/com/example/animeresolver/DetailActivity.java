@@ -49,11 +49,11 @@ public class DetailActivity extends Activity {
     private static final int RANGES_PER_GROUP = 10;
     private static final String BASE = "https://bgm.liwen.icu";
     private static final String ANIFUN_DETAIL = "https://api.anifun.cn/ac/v1/module/aggs/detail";
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(21, 24, 29);
     private static final int MUTED = Color.rgb(104, 108, 116);
     private static final int LINE = Color.rgb(225, 228, 233);
-    private static final int WARM = Color.rgb(253, 252, 250);
+    private static final int WARM = Color.rgb(250, 252, 255);
 
     private final OkHttpClient client = new OkHttpClient();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -125,7 +125,7 @@ public class DetailActivity extends Activity {
             ImageLoader.with(this).load(subjectCover).fit().centerCrop().into(detailBackdrop);
         }
         View veil = new View(this);
-        veil.setBackgroundColor(Color.argb(205, 253, 252, 250));
+        veil.setBackgroundColor(Color.argb(205, 250, 252, 255));
         scene.addView(veil, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -485,7 +485,7 @@ public class DetailActivity extends Activity {
         expand.setIconSize(dp(18));
         expand.setIconPadding(dp(4));
         expand.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_END);
-        expand.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(237, 246, 234)));
+        expand.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(234, 242, 255)));
         expand.setRippleColor(ColorStateList.valueOf(Color.argb(24, 20, 105, 245)));
         expand.setCornerRadius(dp(18));
         expand.setInsetTop(0);

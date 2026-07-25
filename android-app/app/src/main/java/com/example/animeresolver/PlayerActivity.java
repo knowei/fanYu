@@ -113,11 +113,11 @@ public class PlayerActivity extends Activity {
     private static synchronized void clearCachedSources(int episode) {
         SOURCE_CACHE.remove(episode);
     }
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(21, 24, 29);
     private static final int MUTED = Color.rgb(104, 108, 116);
     private static final int LINE = Color.rgb(225, 228, 233);
-    private static final int WARM = Color.rgb(253, 252, 250);
+    private static final int WARM = Color.rgb(250, 252, 255);
 
     private ExoPlayer player;
     private PlayerView playerView;
@@ -491,7 +491,7 @@ public class PlayerActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setGravity(Gravity.CENTER_VERTICAL);
         tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
-        tabs.setBackground(rounded(Color.rgb(239, 244, 237), 14, Color.TRANSPARENT, 0));
+        tabs.setBackground(rounded(Color.rgb(234, 242, 255), 14, Color.TRANSPARENT, 0));
         episodesTabButton = contentTabButton("选集", true);
         episodesTabButton.setOnClickListener(v -> selectContentTab(true));
         discussionTabButton = contentTabButton("讨论", false);

@@ -56,11 +56,11 @@ public class HomeActivity extends Activity {
     private static final String ANILIST_GRAPHQL = "https://graphql.anilist.co";
     private static final String ANIFUN_WEEKLY = "https://api.anifun.cn/ac/v1/wiki/anime/week_schedule/index";
     private static final String ANIFUN_SEARCH = "https://api.anifun.cn/ac/v1/search/module-and-news";
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
-    private static final int WARM_WHITE = Color.rgb(253, 252, 250);
+    private static final int WARM_WHITE = Color.rgb(250, 252, 255);
 
     private final OkHttpClient client = new OkHttpClient();
     private final ExecutorService executor = Executors.newCachedThreadPool();
@@ -116,7 +116,7 @@ public class HomeActivity extends Activity {
         nav.setOrientation(expanded ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         nav.setGravity(Gravity.CENTER);
         nav.setPadding(dp(8), dp(8), dp(8), dp(8));
-        nav.setBackgroundColor(Color.rgb(248, 250, 244));
+        nav.setBackgroundColor(Color.rgb(250, 252, 255));
 
         broadcastTab = navButton("放送", R.drawable.ic_calendar_today_24);
         myTab = navButton("我的", R.drawable.ic_person_outline_24);
@@ -168,9 +168,9 @@ public class HomeActivity extends Activity {
             myTab.getCompoundDrawables()[1].setTint(broadcast ? MUTED : BLUE);
         }
         broadcastTab.setBackground(roundedRect(broadcast
-                ? Color.rgb(222, 239, 219) : Color.TRANSPARENT, 24));
+                ? Color.rgb(234, 242, 255) : Color.TRANSPARENT, 24));
         myTab.setBackground(roundedRect(broadcast
-                ? Color.TRANSPARENT : Color.rgb(222, 239, 219), 24));
+                ? Color.TRANSPARENT : Color.rgb(234, 242, 255), 24));
         View selected = broadcast ? broadcastTab : myTab;
         selected.animate().scaleX(1.03f).scaleY(1.03f).setDuration(100L)
                 .withEndAction(() -> selected.animate().scaleX(1f).scaleY(1f)
@@ -324,14 +324,14 @@ public class HomeActivity extends Activity {
             day.setGravity(Gravity.CENTER);
             day.setLineSpacing(dp(3), 1f);
             day.setTag(date);
-            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(222, 239, 219), 10));
+            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(234, 242, 255), 10));
             day.setOnClickListener(v -> {
                 for (int child = 0; child < rail.getChildCount(); child++) {
                     TextView item = (TextView) rail.getChildAt(child);
                     boolean selected = date.equals(item.getTag());
                     item.setTextColor(selected ? BLUE : INK);
                     item.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-                    item.setBackground(selected ? roundedRect(Color.rgb(222, 239, 219), 10) : null);
+                    item.setBackground(selected ? roundedRect(Color.rgb(234, 242, 255), 10) : null);
                 }
                 if (!date.equals(monday)) {
                     scroll.post(() -> scroll.smoothScrollTo(Math.max(0,

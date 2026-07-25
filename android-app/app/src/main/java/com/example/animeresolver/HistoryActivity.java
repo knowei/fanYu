@@ -33,11 +33,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class HistoryActivity extends Activity {
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
-    private static final int WARM_WHITE = Color.rgb(253, 252, 250);
+    private static final int WARM_WHITE = Color.rgb(250, 252, 255);
 
     private LinearLayout content;
     private LinearLayout filterRow;

@@ -21,7 +21,7 @@ import android.widget.Toast;
 
 
 public class SiteVerificationActivity extends Activity {
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private WebView webView;
 
     private int dp(int value) {
@@ -42,7 +42,7 @@ public class SiteVerificationActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(10), dp(18), dp(14));
-        root.setBackgroundColor(Color.rgb(253, 252, 250));
+        root.setBackgroundColor(Color.rgb(250, 252, 255));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -96,7 +96,7 @@ public class SiteVerificationActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         completeParams.setMargins(0, dp(12), 0, 0);
         root.addView(complete, completeParams);
-        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
+        SystemBars.apply(this, root, Color.rgb(250, 252, 255));
         setContentView(root);
     }
 

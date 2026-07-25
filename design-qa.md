@@ -104,3 +104,10 @@ final result: passed
 ## Evidence
 
 Emulator captures are stored locally under `android-app/audit/` and excluded from version control.
+
+### Blue-white theme pass (1.1.1)
+
+- Replaced the green brand palette with fixed blue `#2F6FED`, pale-blue containers `#EAF2FF`, and cool white `#FAFCFF` surfaces.
+- Disabled wallpaper-derived dynamic colors so the brand palette remains consistent across Android devices.
+- Kept green, amber, and red exclusively for source success, verification/loading, and failure states.
+- Rechecked the broadcast and detail screens at 1080 × 2280; selected dates, navigation, links, buttons, episode groups, system bars, and content contrast passed.

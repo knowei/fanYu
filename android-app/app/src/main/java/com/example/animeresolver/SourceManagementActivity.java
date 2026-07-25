@@ -48,7 +48,7 @@ public class SourceManagementActivity extends Activity {
     private static final String SUBSCRIPTION_URL = "https://sub.creamycake.org/v1/css1.json";
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
-    private static final int BLUE = Color.rgb(55, 113, 61);
+    private static final int BLUE = Color.rgb(47, 111, 237);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
@@ -76,7 +76,7 @@ public class SourceManagementActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(10), dp(18), dp(14));
-        root.setBackgroundColor(Color.rgb(253, 252, 250));
+        root.setBackgroundColor(Color.rgb(250, 252, 255));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -131,7 +131,7 @@ public class SourceManagementActivity extends Activity {
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        SystemBars.apply(this, root, Color.rgb(253, 252, 250));
+        SystemBars.apply(this, root, Color.rgb(250, 252, 255));
         setContentView(root);
     }
 
@@ -474,8 +474,8 @@ public class SourceManagementActivity extends Activity {
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
         button.setPadding(dp(12), 0, dp(12), 0);
-        button.setBackground(round(primary ? BLUE : Color.rgb(237, 246, 234), 10,
-                primary ? BLUE : Color.rgb(202, 224, 198), primary ? 0 : 1));
+        button.setBackground(round(primary ? BLUE : Color.rgb(234, 242, 255), 10,
+                primary ? BLUE : Color.rgb(191, 211, 255), primary ? 0 : 1));
         return button;
     }
 

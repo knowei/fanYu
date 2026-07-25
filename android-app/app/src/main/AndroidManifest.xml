@@ -3,7 +3,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:name=".FanYuApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_fanyu"
         android:label="番遇"
