@@ -37,7 +37,7 @@ import okhttp3.Response;
 public class SourceEditorActivity extends Activity {
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
-    private static final int BLUE = Color.rgb(25, 112, 243);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
@@ -53,6 +53,8 @@ public class SourceEditorActivity extends Activity {
     private EditText channelSelectorInput;
     private TextView probeStatus;
     private Button probeButton;
+    private Button advancedToggle;
+    private LinearLayout advancedFields;
     private Switch enabledSwitch;
     private boolean autoDetected;
 
@@ -83,6 +85,7 @@ public class SourceEditorActivity extends Activity {
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(0, dp(8), 0, dp(20));
+        UiMotion.animateLayout(form);
         TextView intro = text("输入搜索页面或网站首页，自动探测会尝试识别搜索结果和选集结构。探测结果仍可手动修改。", 13, MUTED, false);
         intro.setLineSpacing(dp(3), 1f);
         form.addView(intro, margins(-1, -2, 0, 0, 14));
@@ -96,10 +99,30 @@ public class SourceEditorActivity extends Activity {
         probeStatus.setLineSpacing(dp(2), 1f);
         form.addView(probeStatus, margins(-1, -2, 0, 0, 18));
 
-        searchSelectorInput = field(form, "搜索结果选择器", ".module-card-item-title > a", true);
-        episodeContainerInput = field(form, "选集容器选择器", ".module-play-list-content", true);
-        episodeSelectorInput = field(form, "单集选择器", "a", true);
-        channelSelectorInput = field(form, "线路名称选择器（可留空）", ".module-tab-item > span", true);
+        TextView modeHint = text("普通模式只需要填写名称和网站地址，再运行自动探测。", 13,
+                Color.rgb(69, 91, 69), true);
+        modeHint.setPadding(dp(12), dp(9), dp(12), dp(9));
+        modeHint.setBackground(round(Color.rgb(237, 246, 234), 12,
+                Color.TRANSPARENT, 0));
+        form.addView(modeHint, margins(-1, -2, 0, 0, 12));
+
+        advancedToggle = actionButton("展开高级设置", false);
+        advancedToggle.setContentDescription("展开搜索和选集选择器设置");
+        form.addView(advancedToggle, margins(-1, dp(44), 0, 0, 8));
+        advancedFields = new LinearLayout(this);
+        advancedFields.setOrientation(LinearLayout.VERTICAL);
+        advancedFields.setVisibility(View.GONE);
+        UiMotion.animateLayout(advancedFields);
+        searchSelectorInput = field(advancedFields, "搜索结果选择器",
+                ".module-card-item-title > a", true);
+        episodeContainerInput = field(advancedFields, "选集容器选择器",
+                ".module-play-list-content", true);
+        episodeSelectorInput = field(advancedFields, "单集选择器", "a", true);
+        channelSelectorInput = field(advancedFields, "线路名称选择器（可留空）",
+                ".module-tab-item > span", true);
+        form.addView(advancedFields);
+        advancedToggle.setOnClickListener(v -> setAdvancedVisible(
+                advancedFields.getVisibility() != View.VISIBLE));
 
         LinearLayout enabledRow = new LinearLayout(this);
         enabledRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -169,6 +192,7 @@ public class SourceEditorActivity extends Activity {
                     String message = error.getMessage() == null ? "无法识别这个网站" : error.getMessage();
                     probeStatus.setText("探测失败：" + message + "。可以手动填写选择器后保存。"
                     );
+                    setAdvancedVisible(true);
                 });
             }
         });
@@ -268,6 +292,14 @@ public class SourceEditorActivity extends Activity {
         );
     }
 
+    private void setAdvancedVisible(boolean visible) {
+        advancedFields.setVisibility(visible ? View.VISIBLE : View.GONE);
+        advancedToggle.setText(visible ? "收起高级设置" : "展开高级设置");
+        advancedToggle.setContentDescription(visible
+                ? "收起搜索和选集选择器设置" : "展开搜索和选集选择器设置");
+        if (visible) advancedFields.post(() -> UiMotion.fadeIn(advancedFields));
+    }
+
     private void save() {
         String name = nameInput.getText().toString().trim();
         String searchUrl = addressInput.getText().toString().trim();
@@ -330,8 +362,8 @@ public class SourceEditorActivity extends Activity {
         button.setMinHeight(0);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
-        button.setBackground(round(primary ? BLUE : Color.rgb(239, 246, 255), 11,
-                primary ? Color.TRANSPARENT : Color.rgb(211, 229, 255), primary ? 0 : 1));
+        button.setBackground(round(primary ? BLUE : Color.rgb(237, 246, 234), 11,
+                primary ? Color.TRANSPARENT : Color.rgb(202, 224, 198), primary ? 0 : 1));
         return button;
     }
 
@@ -341,7 +373,7 @@ public class SourceEditorActivity extends Activity {
         button.setColorFilter(INK);
         button.setScaleType(ImageButton.ScaleType.CENTER);
         button.setPadding(dp(11), dp(11), dp(11), dp(11));
-        button.setBackground(round(Color.rgb(244, 247, 252), 22, Color.TRANSPARENT, 0));
+        button.setBackgroundColor(Color.TRANSPARENT);
         return button;
     }
 

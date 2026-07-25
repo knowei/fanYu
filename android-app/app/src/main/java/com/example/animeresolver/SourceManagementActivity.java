@@ -48,7 +48,7 @@ public class SourceManagementActivity extends Activity {
     private static final String SUBSCRIPTION_URL = "https://sub.creamycake.org/v1/css1.json";
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
-    private static final int BLUE = Color.rgb(25, 112, 243);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
@@ -148,7 +148,8 @@ public class SourceManagementActivity extends Activity {
             for (LocalSourceStore.Config local : LocalSourceStore.read(this)) {
                 parsed.add(SourceSite.fromLocal(local));
             }
-            parsed.sort(Comparator.comparingInt(source -> source.tier));
+            parsed.sort((left, right) -> SourceMetricsStore.compare(this,
+                    left.name, left.tier, right.name, right.tier));
             String finalRemoteError = remoteError;
             runOnUiThread(() -> {
                 sources.clear();
@@ -183,7 +184,8 @@ public class SourceManagementActivity extends Activity {
             String url = search.optString("searchUrl");
             if (url.isBlank() || selector.isBlank()) continue;
             result.add(new SourceSite(args.optString("name", "未命名源"), url, selector,
-                    args.optInt("tier", 99), ""));
+                    args.optInt("tier", 99), "", true,
+                    "规则 v" + item.optInt("version", 1)));
         }
         return result;
     }
@@ -245,15 +247,36 @@ public class SourceManagementActivity extends Activity {
         top.setGravity(Gravity.CENTER_VERTICAL);
         TextView name = text(source.name, 16, INK, true);
         top.addView(name, new LinearLayout.LayoutParams(0, dp(28), 1));
+        TextView version = text(source.version, 11, MUTED, false);
+        version.setGravity(Gravity.CENTER);
+        top.addView(version, new LinearLayout.LayoutParams(-2, dp(26)));
         TextView badge = text(source.status, 12, statusColor(source.status), true);
         badge.setGravity(Gravity.CENTER);
         badge.setPadding(dp(9), 0, dp(9), 0);
         badge.setBackground(round(statusBackground(source.status), 12, Color.TRANSPARENT, 0));
+        badge.setContentDescription("状态：" + source.status);
         top.addView(badge, new LinearLayout.LayoutParams(-2, dp(26)));
         card.addView(top);
         String detailText = source.localId.isBlank() ? source.detail
                 : "本地源 · " + source.detail;
         card.addView(text(detailText, 13, MUTED, false), params(-1, -2, 0, 3, 0, 8));
+        SourceMetricsStore.Summary metrics = SourceMetricsStore.summary(this, source.name);
+        String metricsText;
+        if (metrics.samples() == 0) {
+            metricsText = "智能排序 · 暂无播放样本";
+        } else {
+            String quality = metrics.bestHeight() > 0 ? " · " + metrics.bestHeight() + "P" : "";
+            String latency = metrics.averageLatencyMs() > 0
+                    ? String.format(Locale.CHINA, " · %.1fs", metrics.averageLatencyMs() / 1000f)
+                    : "";
+            metricsText = "成功率 " + metrics.successPercent() + "%" + latency + quality
+                    + " · " + metrics.samples() + " 次";
+        }
+        TextView metricsView = text(metricsText, 12, Color.rgb(69, 91, 69), true);
+        metricsView.setPadding(dp(9), 0, dp(9), 0);
+        metricsView.setBackground(round(Color.rgb(237, 246, 234), 10,
+                Color.TRANSPARENT, 0));
+        card.addView(metricsView, params(-2, dp(26), 0, 0, 0, 10));
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.RIGHT);
         if (!source.localId.isBlank()) {
@@ -280,6 +303,7 @@ public class SourceManagementActivity extends Activity {
             confirmDelete(source);
             return true;
         });
+        card.post(() -> UiMotion.fadeIn(card));
         return card;
     }
 
@@ -450,8 +474,8 @@ public class SourceManagementActivity extends Activity {
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
         button.setPadding(dp(12), 0, dp(12), 0);
-        button.setBackground(round(primary ? BLUE : Color.rgb(239, 246, 255), 10,
-                primary ? BLUE : Color.rgb(211, 229, 255), primary ? 0 : 1));
+        button.setBackground(round(primary ? BLUE : Color.rgb(237, 246, 234), 10,
+                primary ? BLUE : Color.rgb(202, 224, 198), primary ? 0 : 1));
         return button;
     }
 
@@ -517,21 +541,28 @@ public class SourceManagementActivity extends Activity {
         final int tier;
         final String localId;
         final boolean enabled;
+        final String version;
         String status = "等待测试";
         String detail = "输入番剧名后可检查这个源";
 
         SourceSite(String name, String searchUrl, String subjectSelector, int tier, String localId) {
-            this(name, searchUrl, subjectSelector, tier, localId, true);
+            this(name, searchUrl, subjectSelector, tier, localId, true, "规则 v1");
         }
 
         SourceSite(String name, String searchUrl, String subjectSelector, int tier,
                    String localId, boolean enabled) {
+            this(name, searchUrl, subjectSelector, tier, localId, enabled, "本地");
+        }
+
+        SourceSite(String name, String searchUrl, String subjectSelector, int tier,
+                   String localId, boolean enabled, String version) {
             this.name = name;
             this.searchUrl = searchUrl;
             this.subjectSelector = subjectSelector;
             this.tier = tier;
             this.localId = localId == null ? "" : localId;
             this.enabled = enabled;
+            this.version = version == null ? "" : version;
         }
 
         static SourceSite fromLocal(LocalSourceStore.Config config) {

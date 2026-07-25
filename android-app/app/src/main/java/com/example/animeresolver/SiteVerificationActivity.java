@@ -21,7 +21,7 @@ import android.widget.Toast;
 
 
 public class SiteVerificationActivity extends Activity {
-    private static final int BLUE = Color.rgb(20, 105, 245);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private WebView webView;
 
     private int dp(int value) {

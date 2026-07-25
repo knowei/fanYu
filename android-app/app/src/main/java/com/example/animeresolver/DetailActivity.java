@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.RenderEffect;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
@@ -47,7 +49,7 @@ public class DetailActivity extends Activity {
     private static final int RANGES_PER_GROUP = 10;
     private static final String BASE = "https://bgm.liwen.icu";
     private static final String ANIFUN_DETAIL = "https://api.anifun.cn/ac/v1/module/aggs/detail";
-    private static final int BLUE = Color.rgb(20, 105, 245);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(21, 24, 29);
     private static final int MUTED = Color.rgb(104, 108, 116);
     private static final int LINE = Color.rgb(225, 228, 233);
@@ -56,6 +58,7 @@ public class DetailActivity extends Activity {
     private final OkHttpClient client = new OkHttpClient();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private LinearLayout content;
+    private ImageView detailBackdrop;
     private MaterialButton favoriteButton;
     private int subjectId;
     private String indexSource = IndexSourceStore.BANGUMI;
@@ -107,9 +110,28 @@ public class DetailActivity extends Activity {
     }
 
     private void buildShell() {
+        FrameLayout scene = new FrameLayout(this);
+        scene.setBackgroundColor(WARM);
+        detailBackdrop = new ImageView(this);
+        detailBackdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        detailBackdrop.setAlpha(0.20f);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            detailBackdrop.setRenderEffect(RenderEffect.createBlurEffect(
+                    dp(22), dp(22), Shader.TileMode.CLAMP));
+        }
+        scene.addView(detailBackdrop, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (!subjectCover.isBlank()) {
+            ImageLoader.with(this).load(subjectCover).fit().centerCrop().into(detailBackdrop);
+        }
+        View veil = new View(this);
+        veil.setBackgroundColor(Color.argb(205, 253, 252, 250));
+        scene.addView(veil, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(WARM);
+        root.setBackgroundColor(Color.TRANSPARENT);
 
         LinearLayout appBar = new LinearLayout(this);
         appBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -129,13 +151,16 @@ public class DetailActivity extends Activity {
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(20), dp(12), dp(20), dp(26));
+        UiMotion.animateLayout(content);
         showDetailLoading();
         scroll.addView(content);
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        SystemBars.apply(this, root, WARM);
-        setContentView(root);
+        scene.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        SystemBars.apply(this, scene, WARM);
+        setContentView(scene);
     }
 
     private void showDetailLoading() {
@@ -394,6 +419,9 @@ public class DetailActivity extends Activity {
         if (images != null) {
             subjectCover = proxyImage(images.optString("large", images.optString("common", subjectCover)));
         }
+        if (detailBackdrop != null && !subjectCover.isBlank()) {
+            ImageLoader.with(this).load(subjectCover).fit().centerCrop().into(detailBackdrop);
+        }
         totalEpisodes = subject.optInt("total_episodes", 0);
         availableEpisodes = subject.optInt("available_episodes", 0);
         if (availableEpisodes <= 0) availableEpisodes = Math.min(subject.optInt("eps", 1), 1);
@@ -438,6 +466,7 @@ public class DetailActivity extends Activity {
         meta.setMinimumHeight(dp(218));
         hero.addView(meta, metaParams);
         content.addView(hero);
+        UiMotion.fadeIn(hero);
         content.addView(divider(), margins(0, 20, 20));
 
         content.addView(text("简介", 21, INK, true));
@@ -456,7 +485,7 @@ public class DetailActivity extends Activity {
         expand.setIconSize(dp(18));
         expand.setIconPadding(dp(4));
         expand.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_END);
-        expand.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(244, 248, 255)));
+        expand.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(237, 246, 234)));
         expand.setRippleColor(ColorStateList.valueOf(Color.argb(24, 20, 105, 245)));
         expand.setCornerRadius(dp(18));
         expand.setInsetTop(0);

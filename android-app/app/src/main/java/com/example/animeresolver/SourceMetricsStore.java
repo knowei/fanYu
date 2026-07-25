@@ -77,6 +77,16 @@ final class SourceMetricsStore {
         return (int) Math.round((1.0 - score(context, name, 50)) * 1000);
     }
 
+    static synchronized Summary summary(Context context, String name) {
+        JSONObject item = read(context).optJSONObject(baseName(name));
+        if (item == null) return new Summary(0, 0, 0L, 0);
+        int success = item.optInt("success");
+        int failure = item.optInt("failure");
+        long averageLatency = success == 0 ? 0L
+                : item.optLong("latencyTotal") / success;
+        return new Summary(success, failure, averageLatency, item.optInt("bestHeight"));
+    }
+
     static synchronized String recommended(Context context, Collection<String> names) {
         String best = "";
         double bestScore = Double.NEGATIVE_INFINITY;
@@ -131,5 +141,12 @@ final class SourceMetricsStore {
     private static void save(Context context, JSONObject root) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(KEY, root.toString()).apply();
+    }
+
+    record Summary(int success, int failure, long averageLatencyMs, int bestHeight) {
+        int samples() { return success + failure; }
+        int successPercent() {
+            return samples() == 0 ? 0 : Math.round(success * 100f / samples());
+        }
     }
 }

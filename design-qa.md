@@ -73,3 +73,34 @@ Post-fix evidence:
 - [x] Debug APK build and emulator verification
 
 final result: passed
+
+---
+
+# FanYu 1.1.0 Kazumi-inspired Design QA
+
+final result: passed
+
+## Reference and target
+
+- Reference: Kazumi preview screens and its Flutter motion implementation.
+- Target: keep FanYu's two-tab information architecture while adopting the reference's Material 3 hierarchy, source diagnostics, detail atmosphere, player tabs, rule editing modes, adaptive navigation, and restrained motion.
+
+## Verified states
+
+- Phone portrait: broadcast, mine, source management, source editor (normal and advanced), detail, player episode tab, and player discussion tab.
+- Landscape / wide viewport: broadcast page switches to a two-item navigation rail without clipping the main content.
+- Motion: page fades, tab cross-fades, expandable rule fields, player controls, and fullscreen episode panel honor the Android animator scale setting.
+- Accessibility: source state is communicated by readable text and content descriptions in addition to color.
+- Build: debug unit tests and debug APK assembly passed before final packaging.
+
+## Visual comparison notes
+
+- Preserved FanYu's lighter green brand rather than copying Kazumi's purple accent.
+- Matched the reference's calm Material 3 spacing, rounded cards, restrained elevation, and compact tab treatment.
+- Kept the player controls overlaid on video so content below is not pushed down.
+- Replaced the always-visible selector form with a normal mode and an expandable advanced mode.
+- Added measured source health summaries so the source manager communicates success rate, latency, resolution, and sample count at a glance.
+
+## Evidence
+
+Emulator captures are stored locally under `android-app/audit/` and excluded from version control.

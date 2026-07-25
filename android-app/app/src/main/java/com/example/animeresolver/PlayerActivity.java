@@ -113,7 +113,7 @@ public class PlayerActivity extends Activity {
     private static synchronized void clearCachedSources(int episode) {
         SOURCE_CACHE.remove(episode);
     }
-    private static final int BLUE = Color.rgb(20, 105, 245);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(21, 24, 29);
     private static final int MUTED = Color.rgb(104, 108, 116);
     private static final int LINE = Color.rgb(225, 228, 233);
@@ -193,7 +193,9 @@ public class PlayerActivity extends Activity {
         showGestureHint("2.0×  倍速播放", 0);
     };
     private final Runnable hideControls = () -> {
-        if (player != null && player.isPlaying() && controlDock != null) controlDock.setVisibility(View.GONE);
+        if (player != null && player.isPlaying() && controlDock != null) {
+            UiMotion.slideControls(controlDock, false, true);
+        }
     };
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private final Runnable progressUpdater = new Runnable() {
@@ -489,7 +491,7 @@ public class PlayerActivity extends Activity {
         LinearLayout tabs = new LinearLayout(this);
         tabs.setGravity(Gravity.CENTER_VERTICAL);
         tabs.setPadding(dp(4), dp(4), dp(4), dp(4));
-        tabs.setBackground(rounded(Color.rgb(242, 245, 250), 14, Color.TRANSPARENT, 0));
+        tabs.setBackground(rounded(Color.rgb(239, 244, 237), 14, Color.TRANSPARENT, 0));
         episodesTabButton = contentTabButton("选集", true);
         episodesTabButton.setOnClickListener(v -> selectContentTab(true));
         discussionTabButton = contentTabButton("讨论", false);
@@ -518,8 +520,25 @@ public class PlayerActivity extends Activity {
 
     private void selectContentTab(boolean episodes) {
         if (episodePanel == null || discussionPanel == null) return;
-        episodePanel.setVisibility(episodes ? View.VISIBLE : View.GONE);
-        discussionPanel.setVisibility(episodes ? View.GONE : View.VISIBLE);
+        View incoming = episodes ? episodePanel : discussionPanel;
+        View outgoing = episodes ? discussionPanel : episodePanel;
+        if (incoming.getVisibility() == View.VISIBLE) return;
+        outgoing.animate().cancel();
+        incoming.animate().cancel();
+        incoming.setVisibility(View.VISIBLE);
+        if (UiMotion.enabled(incoming)) {
+            incoming.setAlpha(0f);
+            incoming.setTranslationX(dp(12));
+            outgoing.animate().alpha(0f).translationX(-dp(8)).setDuration(90L)
+                    .withEndAction(() -> {
+                        outgoing.setVisibility(View.GONE);
+                        outgoing.setAlpha(1f);
+                        outgoing.setTranslationX(0f);
+                    }).start();
+            incoming.animate().alpha(1f).translationX(0f).setDuration(180L).start();
+        } else {
+            outgoing.setVisibility(View.GONE);
+        }
         updateContentTabStyle(episodesTabButton, episodes);
         updateContentTabStyle(discussionTabButton, !episodes);
         if (!episodes) renderDiscussions();
@@ -697,6 +716,12 @@ public class PlayerActivity extends Activity {
                 dp(176), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END | Gravity.CENTER_VERTICAL);
         params.setMargins(0, dp(18), dp(12), dp(18));
         videoFrame.addView(fullscreenPickerPanel, params);
+        if (UiMotion.enabled(fullscreenPickerPanel)) {
+            fullscreenPickerPanel.setAlpha(0f);
+            fullscreenPickerPanel.setTranslationX(dp(176));
+            fullscreenPickerPanel.animate().alpha(1f).translationX(0f)
+                    .setDuration(160L).start();
+        }
         return list;
     }
 
@@ -938,7 +963,7 @@ public class PlayerActivity extends Activity {
             return;
         }
         if (controlDock.getVisibility() == View.VISIBLE) {
-            controlDock.setVisibility(View.GONE);
+            UiMotion.slideControls(controlDock, false, true);
             progressHandler.removeCallbacks(hideControls);
         } else {
             showControlsTemporarily();
@@ -946,7 +971,9 @@ public class PlayerActivity extends Activity {
     }
 
     private void showControlsTemporarily() {
-        controlDock.setVisibility(View.VISIBLE);
+        if (controlDock.getVisibility() != View.VISIBLE) {
+            UiMotion.slideControls(controlDock, true, true);
+        }
         progressHandler.removeCallbacks(hideControls);
         if (player != null && player.isPlaying()) progressHandler.postDelayed(hideControls, 3000);
     }
@@ -1229,6 +1256,7 @@ public class PlayerActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
         sourceListContainer = new LinearLayout(this);
         sourceListContainer.setOrientation(LinearLayout.VERTICAL);
+        UiMotion.animateLayout(sourceListContainer);
         sourceScrollView = new ScrollView(this);
         sourceScrollView.addView(sourceListContainer);
         sheet.addView(sourceScrollView, new LinearLayout.LayoutParams(
@@ -1384,6 +1412,8 @@ public class PlayerActivity extends Activity {
         }
         actions.addView(visit, new LinearLayout.LayoutParams(dp(76), dp(24)));
         row.addView(actions, new LinearLayout.LayoutParams(dp(76), dp(52)));
+        row.setContentDescription(siteName + "，" + detail + (actionText.isBlank()
+                ? "" : "，" + actionText));
         if ((ready && !current) || retryable) row.setOnClickListener(v -> {
             playUrl(name, state.url);
             if (sourceDialog != null) sourceDialog.dismiss();

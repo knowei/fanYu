@@ -26,7 +26,7 @@ import java.util.Locale;
 
 public class DataAndCacheActivity extends Activity {
     private static final int REQUEST_EXPORT_DIAGNOSTICS = 811;
-    private static final int BLUE = Color.rgb(25, 112, 243);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);

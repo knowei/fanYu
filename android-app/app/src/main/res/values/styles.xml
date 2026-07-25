@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="Theme.MaterialComponents.Light.NoActionBar.Bridge">
+    <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="colorPrimary">#1469F5</item>
-        <item name="colorPrimaryVariant">#0F55CC</item>
+        <item name="colorPrimary">#37713D</item>
+        <item name="colorPrimaryContainer">#D4E8D0</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="android:colorAccent">#4F46E5</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
-        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="colorSecondary">#52634F</item>
+        <item name="android:colorAccent">#37713D</item>
+        <item name="android:navigationBarColor">#F8FAF4</item>
+        <item name="android:statusBarColor">#F8FAF4</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActivityTransitions">true</item>
     </style>
-    <style name="TransparentResolverTheme" parent="Theme.MaterialComponents.Light.NoActionBar.Bridge">
+    <style name="TransparentResolverTheme" parent="AppTheme">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackground">@android:color/transparent</item>

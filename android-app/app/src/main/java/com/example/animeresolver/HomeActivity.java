@@ -56,7 +56,7 @@ public class HomeActivity extends Activity {
     private static final String ANILIST_GRAPHQL = "https://graphql.anilist.co";
     private static final String ANIFUN_WEEKLY = "https://api.anifun.cn/ac/v1/wiki/anime/week_schedule/index";
     private static final String ANIFUN_SEARCH = "https://api.anifun.cn/ac/v1/search/module-and-news";
-    private static final int BLUE = Color.rgb(25, 112, 243);
+    private static final int BLUE = Color.rgb(55, 113, 61);
     private static final int INK = Color.rgb(22, 25, 31);
     private static final int MUTED = Color.rgb(105, 108, 115);
     private static final int LINE = Color.rgb(229, 231, 235);
@@ -100,8 +100,9 @@ public class HomeActivity extends Activity {
     }
 
     private void buildShell() {
+        boolean expanded = getResources().getConfiguration().screenWidthDp >= 700;
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        root.setOrientation(expanded ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.setBackgroundColor(WARM_WHITE);
 
         ScrollView scroll = new ScrollView(this);
@@ -111,21 +112,30 @@ public class HomeActivity extends Activity {
         page.setPadding(dp(22), dp(24), dp(22), dp(24));
         scroll.addView(page, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-
         LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(expanded ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         nav.setGravity(Gravity.CENTER);
-        nav.setPadding(dp(8), dp(5), dp(8), dp(8));
-        nav.setBackgroundColor(Color.WHITE);
+        nav.setPadding(dp(8), dp(8), dp(8), dp(8));
+        nav.setBackgroundColor(Color.rgb(248, 250, 244));
 
         broadcastTab = navButton("放送", R.drawable.ic_calendar_today_24);
         myTab = navButton("我的", R.drawable.ic_person_outline_24);
         broadcastTab.setOnClickListener(v -> showBroadcastPage());
         myTab.setOnClickListener(v -> showMyPage());
-        nav.addView(broadcastTab, new LinearLayout.LayoutParams(0, dp(62), 1));
-        nav.addView(myTab, new LinearLayout.LayoutParams(0, dp(62), 1));
-        root.addView(nav);
+        if (expanded) {
+            nav.addView(broadcastTab, new LinearLayout.LayoutParams(dp(76), dp(82)));
+            nav.addView(myTab, new LinearLayout.LayoutParams(dp(76), dp(82)));
+            root.addView(nav, new LinearLayout.LayoutParams(dp(92),
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            root.addView(scroll, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        } else {
+            root.addView(scroll, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+            nav.addView(broadcastTab, new LinearLayout.LayoutParams(0, dp(62), 1));
+            nav.addView(myTab, new LinearLayout.LayoutParams(0, dp(62), 1));
+            root.addView(nav);
+        }
         SystemBars.apply(this, root, WARM_WHITE);
         setContentView(root);
     }
@@ -157,11 +167,20 @@ public class HomeActivity extends Activity {
         if (myTab.getCompoundDrawables()[1] != null) {
             myTab.getCompoundDrawables()[1].setTint(broadcast ? MUTED : BLUE);
         }
+        broadcastTab.setBackground(roundedRect(broadcast
+                ? Color.rgb(222, 239, 219) : Color.TRANSPARENT, 24));
+        myTab.setBackground(roundedRect(broadcast
+                ? Color.TRANSPARENT : Color.rgb(222, 239, 219), 24));
+        View selected = broadcast ? broadcastTab : myTab;
+        selected.animate().scaleX(1.03f).scaleY(1.03f).setDuration(100L)
+                .withEndAction(() -> selected.animate().scaleX(1f).scaleY(1f)
+                        .setDuration(120L).start()).start();
     }
 
     private void showBroadcastPage() {
         selectTab(true);
         page.removeAllViews();
+        page.post(() -> UiMotion.fadeIn(page));
         LocalDate today = LocalDate.now();
         page.addView(label(weekdayGreeting(today), 28, INK, true),
                 matchWrap(0, 0, 0, 18));
@@ -305,14 +324,14 @@ public class HomeActivity extends Activity {
             day.setGravity(Gravity.CENTER);
             day.setLineSpacing(dp(3), 1f);
             day.setTag(date);
-            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(235, 243, 255), 10));
+            if (date.equals(today)) day.setBackground(roundedRect(Color.rgb(222, 239, 219), 10));
             day.setOnClickListener(v -> {
                 for (int child = 0; child < rail.getChildCount(); child++) {
                     TextView item = (TextView) rail.getChildAt(child);
                     boolean selected = date.equals(item.getTag());
                     item.setTextColor(selected ? BLUE : INK);
                     item.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
-                    item.setBackground(selected ? roundedRect(Color.rgb(235, 243, 255), 10) : null);
+                    item.setBackground(selected ? roundedRect(Color.rgb(222, 239, 219), 10) : null);
                 }
                 if (!date.equals(monday)) {
                     scroll.post(() -> scroll.smoothScrollTo(Math.max(0,
@@ -749,6 +768,7 @@ public class HomeActivity extends Activity {
     private void showMyPage() {
         selectTab(false);
         page.removeAllViews();
+        page.post(() -> UiMotion.fadeIn(page));
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = label("我的", 28, INK, true);
