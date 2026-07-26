@@ -1,0 +1,19 @@
+{
+  "format": "fanyu-source-rule",
+  "schemaVersion": 1,
+  "id": "orange-anime",
+  "name": "橘子动漫",
+  "version": "1.0.0",
+  "config": {
+    "id": "orange-anime",
+    "name": "橘子动漫",
+    "searchUrl": "https://www.mgnacg.com/search/-------------/?wd={keyword}",
+    "subjectSelector": ".search-box .thumb-menu > a",
+    "episodeContainer": ".anthology-list-box",
+    "episodeSelector": "a",
+    "channelSelector": ".anthology-tab > .swiper-wrapper a",
+    "tier": 8,
+    "enabled": true,
+    "autoDetected": false
+  }
+}

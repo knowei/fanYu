@@ -819,8 +819,8 @@ public class HomeActivity extends Activity {
         View historyRow = settingsRow("播放记录", R.drawable.ic_history_24);
         historyRow.setOnClickListener(v -> startActivity(new Intent(this, HistoryActivity.class)));
         page.addView(historyRow);
-        View sourceRow = settingsRow("视频源管理", R.drawable.ic_search_24);
-        sourceRow.setOnClickListener(v -> startActivity(new Intent(this, SourceManagementActivity.class)));
+        View sourceRow = settingsRow("视频源规则", R.drawable.ic_search_24);
+        sourceRow.setOnClickListener(v -> startActivity(new Intent(this, RuleRepositoryActivity.class)));
         page.addView(sourceRow);
         View dataRow = settingsRow("数据与缓存", R.drawable.ic_folder_outline_24);
         dataRow.setOnClickListener(v -> startActivity(new Intent(this, DataAndCacheActivity.class)));

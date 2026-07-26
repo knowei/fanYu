@@ -1,0 +1,35 @@
+{
+  "format": "fanyu-rule-index",
+  "version": 1,
+  "updatedAt": "2026-07-26T00:00:00+08:00",
+  "rules": [
+    {
+      "id": "enlie",
+      "name": "Enli 动漫",
+      "version": "1.0.0",
+      "author": "FanYu",
+      "description": "支持多线路的 CSS 页面解析规则",
+      "status": "active",
+      "mode": "css",
+      "downloadUrl": "enlie.json",
+      "capabilities": {
+        "multiRoad": true,
+        "antiCrawler": false
+      }
+    },
+    {
+      "id": "orange-anime",
+      "name": "橘子动漫",
+      "version": "1.0.0",
+      "author": "FanYu",
+      "description": "包含站内验证流程的多线路规则",
+      "status": "active",
+      "mode": "css",
+      "downloadUrl": "orange-anime.json",
+      "capabilities": {
+        "multiRoad": true,
+        "antiCrawler": true
+      }
+    }
+  ]
+}

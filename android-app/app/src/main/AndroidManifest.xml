@@ -13,6 +13,7 @@
             android:theme="@style/TransparentResolverTheme" />
         <activity android:name=".SiteVerificationActivity" />
         <activity android:name=".SourceManagementActivity" />
+        <activity android:name=".RuleRepositoryActivity" />
         <activity android:name=".SourceEditorActivity" />
         <activity android:name=".SettingsActivity" />
         <activity android:name=".DataAndCacheActivity" />

@@ -77,14 +77,23 @@ final class LocalSourceStore {
             imported = new JSONArray(value);
         } else {
             JSONObject root = new JSONObject(value);
-            if (!"fanyu-source-rules".equals(root.optString("format"))) {
+            String format = root.optString("format");
+            if ("fanyu-source-rule".equals(format)) {
+                if (root.optInt("schemaVersion", 0) > 1) {
+                    throw new IllegalArgumentException("规则版本过新，请先升级番遇");
+                }
+                JSONObject config = root.optJSONObject("config");
+                if (config == null) throw new IllegalArgumentException("缺少 config 字段");
+                imported = new JSONArray().put(config);
+            } else if (!"fanyu-source-rules".equals(format)) {
                 throw new IllegalArgumentException("不是番遇视频源规则文件");
+            } else {
+                if (root.optInt("version", 0) > 1) {
+                    throw new IllegalArgumentException("规则版本过新，请先升级番遇");
+                }
+                imported = root.optJSONArray("sources");
+                if (imported == null) throw new IllegalArgumentException("缺少 sources 字段");
             }
-            if (root.optInt("version", 0) > 1) {
-                throw new IllegalArgumentException("规则版本过新，请先升级番遇");
-            }
-            imported = root.optJSONArray("sources");
-            if (imported == null) throw new IllegalArgumentException("缺少 sources 字段");
         }
 
         List<Config> current = read(context);

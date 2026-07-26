@@ -1,0 +1,19 @@
+{
+  "format": "fanyu-source-rule",
+  "schemaVersion": 1,
+  "id": "enlie",
+  "name": "Enli 动漫",
+  "version": "1.0.0",
+  "config": {
+    "id": "enlie",
+    "name": "Enli 动漫",
+    "searchUrl": "https://enlienli.link/vod/search.html?wd={keyword}",
+    "subjectSelector": ".module-card-item > .module-card-item-info > .module-card-item-title > a",
+    "episodeContainer": ".module-play-list-content",
+    "episodeSelector": "a",
+    "channelSelector": ".module-tab-item > span",
+    "tier": 0,
+    "enabled": true,
+    "autoDetected": false
+  }
+}
