@@ -67,6 +67,7 @@ public class DetailActivity extends Activity {
     private int selectedEpisode = 1;
     private String subjectName = "";
     private String subjectCover = "";
+    private final ArrayList<String> subjectNames = new ArrayList<>();
     private int totalEpisodes = 12;
     private int availableEpisodes = 1;
     private final ArrayList<String> episodeTitles = new ArrayList<>();
@@ -76,6 +77,7 @@ public class DetailActivity extends Activity {
     private HorizontalScrollView episodeGroupScroll;
     private LinearLayout episodeGrid;
     private int selectedEpisodeRange;
+    private boolean openingPlayer;
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
@@ -414,6 +416,7 @@ public class DetailActivity extends Activity {
         String chineseName = subject.optString("name_cn").trim();
         if (chineseName.isEmpty()) chineseName = subject.optString("name", subjectName);
         subjectName = chineseName;
+        collectSubjectNames(subject);
         String original = subject.optString("name");
         JSONObject images = subject.optJSONObject("images");
         if (images != null) {
@@ -718,14 +721,59 @@ public class DetailActivity extends Activity {
     }
 
     private void resolveSelectedEpisode() {
+        if (openingPlayer) return;
+        openingPlayer = true;
         Intent intent = new Intent(this, PlayerActivity.class);
         intent.putExtra("subject_name", subjectName);
+        intent.putStringArrayListExtra("subject_names", new ArrayList<>(subjectNames));
+        intent.putExtra("subject_key", indexSource + ":" + subjectId);
         intent.putExtra("subject_cover", subjectCover);
         intent.putExtra("bangumi_id", subjectId);
         intent.putExtra("episode", selectedEpisode);
         intent.putExtra("available_episodes", availableEpisodes);
         intent.putStringArrayListExtra("episode_titles", new ArrayList<>(episodeTitles));
         startActivity(intent);
+        overridePendingTransition(R.anim.activity_enter_from_right, R.anim.activity_exit_to_left);
+        content.postDelayed(() -> openingPlayer = false, 450L);
+    }
+
+    private void collectSubjectNames(JSONObject subject) {
+        subjectNames.clear();
+        addSubjectName(subject.optString("name_cn"));
+        addSubjectName(subject.optString("name"));
+        JSONArray infobox = subject.optJSONArray("infobox");
+        if (infobox == null) return;
+        for (int index = 0; index < infobox.length(); index++) {
+            JSONObject item = infobox.optJSONObject(index);
+            if (item == null) continue;
+            String key = item.optString("key");
+            if (!(key.contains("别名") || key.contains("译名") || key.contains("原名")
+                    || key.equalsIgnoreCase("alias"))) continue;
+            Object value = item.opt("value");
+            if (value instanceof JSONArray values) {
+                for (int valueIndex = 0; valueIndex < values.length(); valueIndex++) {
+                    Object alias = values.opt(valueIndex);
+                    if (alias instanceof JSONObject object) {
+                        addSubjectName(object.optString("v", object.optString("value")));
+                    } else if (alias != null) {
+                        addSubjectName(String.valueOf(alias));
+                    }
+                }
+            } else if (value != null) {
+                String aliases = String.valueOf(value);
+                for (String alias : aliases.split("[/／、|｜;；\\n]")) addSubjectName(alias);
+            }
+        }
+    }
+
+    private void addSubjectName(String value) {
+        if (value == null) return;
+        String candidate = value.trim();
+        if (candidate.isBlank()) return;
+        for (String existing : subjectNames) {
+            if (normalizeTitle(existing).equals(normalizeTitle(candidate))) return;
+        }
+        subjectNames.add(candidate);
     }
 
     private int loadEpisodeMetadata() throws Exception {

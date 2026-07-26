@@ -1,6 +1,7 @@
 package com.example.animeresolver;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.IntentFilter;
@@ -15,10 +16,13 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
@@ -42,6 +46,7 @@ import androidx.media3.ui.PlayerView;
 import com.squareup.picasso.Picasso;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -126,6 +131,8 @@ public class PlayerActivity extends Activity {
     private String subjectCover;
     private int episode;
     private int bangumiId;
+    private String subjectKey = "";
+    private ArrayList<String> subjectNames = new ArrayList<>();
     private int availableEpisodes;
     private TextView currentEpisodeView;
     private TextView currentEpisodeNameView;
@@ -289,6 +296,12 @@ public class PlayerActivity extends Activity {
     }
 
     @Override
+    public void finish() {
+        super.finish();
+        overridePendingTransition(R.anim.activity_return_from_left, R.anim.activity_exit_to_right);
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         videoUrl = getIntent().getStringExtra("video_url");
@@ -296,6 +309,11 @@ public class PlayerActivity extends Activity {
         subjectCover = getIntent().getStringExtra("subject_cover");
         episode = Math.max(1, getIntent().getIntExtra("episode", 1));
         bangumiId = getIntent().getIntExtra("bangumi_id", 0);
+        subjectKey = TitleAliasStore.subjectKey(getIntent().getStringExtra("subject_key"),
+                bangumiId, subjectName);
+        ArrayList<String> incomingNames = getIntent().getStringArrayListExtra("subject_names");
+        if (incomingNames != null) subjectNames = incomingNames;
+        if (subjectNames.isEmpty() && subjectName != null) subjectNames.add(subjectName);
         availableEpisodes = Math.max(1, getIntent().getIntExtra("available_episodes", 12));
         ArrayList<String> incomingTitles = getIntent().getStringArrayListExtra("episode_titles");
         if (incomingTitles != null) episodeTitles = incomingTitles;
@@ -1254,6 +1272,9 @@ public class PlayerActivity extends Activity {
         sourceSummaryView = text("", 13, MUTED, false);
         sheet.addView(sourceSummaryView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
+        TextView correctionHint = text("名称不一致？长按对应来源可更正搜索名称", 12, MUTED, false);
+        sheet.addView(correctionHint, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(30)));
         sourceListContainer = new LinearLayout(this);
         sourceListContainer.setOrientation(LinearLayout.VERTICAL);
         UiMotion.animateLayout(sourceListContainer);
@@ -1270,11 +1291,28 @@ public class PlayerActivity extends Activity {
         });
         renderSourcePicker();
         sourceDialog.setOnShowListener(dialog -> {
-            View parent = (View) sheet.getParent();
-            if (parent != null) {
-                parent.getLayoutParams().height = dp(500);
-                parent.setBackgroundColor(Color.TRANSPARENT);
+            android.widget.FrameLayout bottomSheet = sourceDialog.findViewById(
+                    com.google.android.material.R.id.design_bottom_sheet);
+            if (bottomSheet == null) return;
+            int availableHeight = getWindow().getDecorView().getHeight();
+            if (availableHeight <= 0) {
+                availableHeight = getResources().getDisplayMetrics().heightPixels;
             }
+            int maximumHeight = Math.min(availableHeight, Math.max(dp(180),
+                    Math.round(availableHeight * (fullscreen ? 0.92f : 0.82f))));
+            int targetHeight = Math.min(dp(500), maximumHeight);
+            ViewGroup.LayoutParams params = bottomSheet.getLayoutParams();
+            params.height = targetHeight;
+            bottomSheet.setLayoutParams(params);
+            bottomSheet.setBackgroundColor(Color.TRANSPARENT);
+            sheet.setMinimumHeight(targetHeight);
+
+            BottomSheetBehavior<android.widget.FrameLayout> behavior =
+                    BottomSheetBehavior.from(bottomSheet);
+            behavior.setFitToContents(true);
+            behavior.setSkipCollapsed(true);
+            behavior.setPeekHeight(targetHeight, false);
+            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
         });
         sourceDialog.show();
     }
@@ -1418,11 +1456,85 @@ public class PlayerActivity extends Activity {
             playUrl(name, state.url);
             if (sourceDialog != null) sourceDialog.dismiss();
         });
+        String correctionSourceName = SourceMetricsStore.baseName(name);
+        row.setOnLongClickListener(v -> {
+            showSourceTitleCorrection(correctionSourceName);
+            return true;
+        });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
         params.setMargins(0, dp(5), 0, dp(5));
         row.setLayoutParams(params);
         return row;
+    }
+
+    private void showSourceTitleCorrection(String sourceName) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        String saved = TitleAliasStore.preferredName(this, subjectKey, sourceName);
+        input.setText(saved.isBlank() ? subjectName : saved);
+        input.setSelection(input.getText().length());
+        int padding = dp(20);
+        android.widget.FrameLayout holder = new android.widget.FrameLayout(this);
+        holder.setPadding(padding, 0, padding, 0);
+        holder.addView(input, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("更正“" + sourceName + "”的搜索名称")
+                .setMessage("只影响当前番剧在这个视频源中的搜索。保存后会立即重新解析。")
+                .setView(holder)
+                .setNegativeButton("取消", null)
+                .setNeutralButton("恢复自动", (buttonDialog, which) -> {
+                    TitleAliasStore.saveCorrection(this, subjectKey, sourceName, "");
+                    retrySingleSource(sourceName, "");
+                })
+                .setPositiveButton("保存并重试", (buttonDialog, which) -> {
+                    String value = input.getText().toString().trim();
+                    if (value.isBlank()) {
+                        Toast.makeText(this, "搜索名称不能为空", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    TitleAliasStore.saveCorrection(this, subjectKey, sourceName, value);
+                    retrySingleSource(sourceName, value);
+                })
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setSoftInputMode(
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+            }
+            input.requestFocus();
+            input.postDelayed(() -> {
+                InputMethodManager keyboard = (InputMethodManager)
+                        getSystemService(INPUT_METHOD_SERVICE);
+                if (keyboard != null) keyboard.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            }, 180L);
+        });
+        dialog.show();
+    }
+
+    private void retrySingleSource(String sourceName, String keywordOverride) {
+        java.util.ArrayList<String> removeKeys = new java.util.ArrayList<>();
+        for (String key : sourceStates.keySet()) {
+            if (SourceMetricsStore.baseName(key).equals(sourceName)) removeKeys.add(key);
+        }
+        for (String key : removeKeys) {
+            sourceStates.remove(key);
+            sources.remove(key);
+            cacheSourceState(episode, key, SOURCE_REMOVED, "", "", "");
+        }
+        sourceStates.put(sourceName, new SourceState(SOURCE_LOADING, "", "", ""));
+        cacheSourceState(episode, sourceName, SOURCE_LOADING, "", "", "");
+        renderSourcePicker();
+        updateSourceStatus();
+
+        Intent intent = resolutionIntent(episode);
+        intent.putExtra("only_source", sourceName);
+        intent.putExtra("source_keyword_override", keywordOverride);
+        startActivity(intent);
+        overridePendingTransition(0, 0);
     }
 
     private void openVerificationSite(String siteUrl) {
@@ -1496,18 +1608,25 @@ public class PlayerActivity extends Activity {
         renderEpisodeSelector();
         updateFullscreenControls();
         if (player != null) player.stop();
+        Intent intent = resolutionIntent(targetEpisode);
+        intent.putExtra("available_episodes", availableEpisodes);
+        intent.putStringArrayListExtra("episode_titles", new ArrayList<>(episodeTitles));
+        startActivity(intent);
+        overridePendingTransition(0, 0);
+    }
+
+    private Intent resolutionIntent(int targetEpisode) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("subject_name", subjectName);
+        intent.putStringArrayListExtra("subject_names", new ArrayList<>(subjectNames));
+        intent.putExtra("subject_key", subjectKey);
         intent.putExtra("subject_cover", subjectCover);
         intent.putExtra("bangumi_id", bangumiId);
         intent.putExtra("episode", targetEpisode);
         intent.putExtra("auto_resolve", true);
         intent.putExtra("return_to_player", true);
-        intent.putExtra("available_episodes", availableEpisodes);
-        intent.putStringArrayListExtra("episode_titles", new ArrayList<>(episodeTitles));
         intent.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
-        startActivity(intent);
-        overridePendingTransition(0, 0);
+        return intent;
     }
 
     private void renderEpisodeSelector() {

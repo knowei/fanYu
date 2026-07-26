@@ -38,9 +38,11 @@ import org.jsoup.select.Elements;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -102,6 +104,10 @@ public class MainActivity extends Activity {
 
     private Stage stage = Stage.IDLE;
     private String requestedName;
+    private final ArrayList<String> requestedNames = new ArrayList<>();
+    private String subjectKey = "";
+    private String onlySource = "";
+    private String sourceKeywordOverride = "";
     private int requestedEpisode;
     private String detailUrl;
     private String episodeUrl;
@@ -129,6 +135,13 @@ public class MainActivity extends Activity {
             nameInput.setText(incomingName);
             requestedName = incomingName;
         }
+        ArrayList<String> incomingNames = getIntent().getStringArrayListExtra("subject_names");
+        if (incomingNames != null) requestedNames.addAll(incomingNames);
+        if (incomingName != null && !incomingName.isBlank()) addRequestedName(incomingName);
+        subjectKey = TitleAliasStore.subjectKey(getIntent().getStringExtra("subject_key"),
+                getIntent().getIntExtra("bangumi_id", 0), incomingName);
+        onlySource = safeString(getIntent().getStringExtra("only_source"));
+        sourceKeywordOverride = safeString(getIntent().getStringExtra("source_keyword_override"));
         subjectCover = getIntent().getStringExtra("subject_cover");
         if (subjectCover == null) subjectCover = "";
         favoriteButton.setVisibility(incomingName == null || incomingName.isBlank()
@@ -310,6 +323,7 @@ public class MainActivity extends Activity {
 
     private void startResolve() {
         requestedName = nameInput.getText().toString().trim();
+        addRequestedName(requestedName);
         String episodeText = episodeInput.getText().toString().trim();
         if (requestedName.isEmpty() || episodeText.isEmpty()) {
             Toast.makeText(this, "请输入番剧名称和集数", Toast.LENGTH_SHORT).show();
@@ -346,6 +360,9 @@ public class MainActivity extends Activity {
                 HttpPage subscription = getPage(SUBSCRIPTION_URL);
                 List<SourceConfig> sources = parseSourceConfigs(subscription.html);
                 addLocalSources(sources);
+                if (!onlySource.isBlank()) {
+                    sources.removeIf(source -> !source.name.equals(onlySource));
+                }
                 if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
                 sources.sort((left, right) -> SourceMetricsStore.compare(this,
                         left.name, left.tier, right.name, right.tier));
@@ -353,8 +370,9 @@ public class MainActivity extends Activity {
                 java.util.LinkedHashMap<String, String> sourceSearchUrls =
                         new java.util.LinkedHashMap<>();
                 for (SourceConfig source : sources) {
+                    String firstKeyword = searchNamesFor(source).get(0);
                     sourceSearchUrls.put(source.name, source.searchUrl.replace(
-                            "{keyword}", Uri.encode(requestedName)));
+                            "{keyword}", Uri.encode(searchKeyword(firstKeyword, source))));
                 }
                 PlayerActivity.beginSourceResolution(requestedEpisode, sourceSearchUrls);
                 for (java.util.Map.Entry<String, String> source : sourceSearchUrls.entrySet()) {
@@ -480,6 +498,14 @@ public class MainActivity extends Activity {
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     if (generation != probeGeneration) return;
+                    if (!onlySource.isBlank()) {
+                        String message = exception.getMessage();
+                        broadcastSourceState(onlySource, PlayerActivity.SOURCE_FAILED,
+                                "", message == null || message.isBlank()
+                                        ? "重新匹配失败" : message, "");
+                        finish();
+                        return;
+                    }
                     setStatus("多源直连未命中，正在使用兼容模式…");
                     resolveWithHttp(fallbackSearchUrl, generation);
                 });
@@ -563,6 +589,9 @@ public class MainActivity extends Activity {
                     episodeNamePattern,
                     search.optString("defaultResolution",
                             arguments.optString("defaultResolution")),
+                    Math.max(1, search.optInt("searchUseSubjectNamesCount", 3)),
+                    search.optBoolean("searchUseOnlyFirstWord", false),
+                    search.optBoolean("searchRemoveSpecial", false),
                     arguments.optInt("tier", 99)
             ));
         }
@@ -579,7 +608,7 @@ public class MainActivity extends Activity {
             sources.add(new SourceConfig(local.name, local.searchUrl, "a",
                     local.subjectSelector, "", "index-grouped", local.channelSelector,
                     "", local.episodeContainer, local.episodeSelector, "",
-                    "第\\s*(?<ep>.+)\\s*[话集]", "", local.tier));
+                    "第\\s*(?<ep>.+)\\s*[话集]", "", 3, false, false, local.tier));
         }
         sources.sort(Comparator.comparingInt(source -> source.tier));
     }
@@ -590,48 +619,68 @@ public class MainActivity extends Activity {
             SourceProgress progress
     ) throws Exception {
         if (generation != probeGeneration) throw new IOException("任务已取消");
-        String searchUrl = source.searchUrl.replace(
-                "{keyword}", Uri.encode(requestedName));
-        HttpPage searchPage = getPage(searchUrl);
-        if (isChallengePage(searchPage)) throw new IOException("需要验证");
-        Document searchDocument = Jsoup.parse(searchPage.html, searchPage.url);
-
-        String foundDetailUrl;
-        if ("indexed".equals(source.subjectFormat)) {
-            Elements names = searchDocument.select(source.subjectSelector);
-            Elements links = searchDocument.select(source.subjectLinkSelector);
-            if (links.isEmpty()) throw new IOException("搜索结果为空");
-            int chosen = 0;
-            for (int index = 0; index < Math.min(names.size(), links.size()); index++) {
-                if (normalizeName(names.get(index).text())
-                        .equals(normalizeName(requestedName))) {
-                    chosen = index;
+        SubjectCandidate matchedSubject = null;
+        String matchedSearchName = "";
+        Exception lastSearchError = null;
+        String foundDetailUrl = "";
+        Document detailDocument = null;
+        String cachedDetailUrl = TitleAliasStore.detailUrl(this, subjectKey, source.name);
+        if (!cachedDetailUrl.isBlank()) {
+            try {
+                HttpPage cachedPage = getPage(cachedDetailUrl);
+                if (!isChallengePage(cachedPage)) {
+                    Document cachedDocument = Jsoup.parse(cachedPage.html, cachedPage.url);
+                    if (!selectEpisodeCandidates(cachedDocument, cachedDetailUrl,
+                            source, requestedEpisode).isEmpty()) {
+                        foundDetailUrl = cachedDetailUrl;
+                        detailDocument = cachedDocument;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Stale detail mappings are expected; the normal title search repairs them.
+            }
+        }
+        for (String searchName : foundDetailUrl.isBlank()
+                ? searchNamesFor(source) : java.util.Collections.<String>emptyList()) {
+            if (generation != probeGeneration) throw new IOException("任务已取消");
+            String keyword = searchKeyword(searchName, source);
+            String searchUrl = source.searchUrl.replace("{keyword}", Uri.encode(keyword));
+            try {
+                HttpPage searchPage = getPage(searchUrl);
+                if (isChallengePage(searchPage)) throw new IOException("需要验证");
+                Document searchDocument = Jsoup.parse(searchPage.html, searchPage.url);
+                SubjectCandidate candidate = findBestSubject(searchDocument, source, searchName);
+                if (candidate != null && candidate.score >= 74) {
+                    matchedSubject = candidate;
+                    matchedSearchName = searchName;
                     break;
                 }
+                lastSearchError = new IOException(candidate == null
+                        ? "搜索结果为空" : "搜索结果名称不匹配");
+            } catch (Exception exception) {
+                if (exception.getMessage() != null && exception.getMessage().contains("验证")) {
+                    throw exception;
+                }
+                lastSearchError = exception;
             }
-            Element link = links.get(Math.min(chosen, links.size() - 1));
-            foundDetailUrl = link.hasAttr("href") ? link.absUrl("href") :
-                    link.selectFirst("a[href]") == null ? "" :
-                            link.selectFirst("a[href]").absUrl("href");
-        } else {
-            Elements subjects = searchDocument.select(source.subjectSelector);
-            if (subjects.isEmpty()) throw new IOException("搜索结果为空");
-            Element selected = subjects.stream()
-                    .filter(element -> normalizeName(element.text())
-                            .equals(normalizeName(requestedName)))
-                    .findFirst()
-                    .orElse(subjects.first());
-            Element link = selected.hasAttr("href") ? selected :
-                    selected.selectFirst("a[href]");
-            foundDetailUrl = link == null ? "" : link.absUrl("href");
         }
-        if (foundDetailUrl.isBlank()) throw new IOException("详情链接为空");
+        if (foundDetailUrl.isBlank() && matchedSubject == null) {
+            throw lastSearchError == null ? new IOException("搜索结果为空") : lastSearchError;
+        }
+        if (foundDetailUrl.isBlank()) {
+            foundDetailUrl = matchedSubject.url;
+            TitleAliasStore.rememberMatch(this, subjectKey, source.name,
+                    matchedSearchName, foundDetailUrl);
+        }
 
-        HttpPage detailPage = getPage(foundDetailUrl);
-        if (isChallengePage(detailPage)) throw new IOException("需要验证");
-        Document detailDocument = Jsoup.parse(detailPage.html, detailPage.url);
+        if (detailDocument == null) {
+            HttpPage detailPage = getPage(foundDetailUrl);
+            if (isChallengePage(detailPage)) throw new IOException("需要验证");
+            detailDocument = Jsoup.parse(detailPage.html, detailPage.url);
+        }
+        final String resolvedDetailUrl = foundDetailUrl;
         List<EpisodeCandidate> candidates = selectEpisodeCandidates(
-                detailDocument, foundDetailUrl, source, requestedEpisode);
+                detailDocument, resolvedDetailUrl, source, requestedEpisode);
         if (candidates.isEmpty()) throw new IOException("剧集不存在");
         progress.onDiscovered(candidates);
 
@@ -651,7 +700,7 @@ public class MainActivity extends Activity {
                         throw new IOException("未发现直连媒体");
                     }
                     return new ChannelAttempt(candidate,
-                            new ResolveResult(candidate.sourceKey, foundDetailUrl,
+                            new ResolveResult(candidate.sourceKey, resolvedDetailUrl,
                                     candidate.episodeUrl, mediaUrl), "");
                 } catch (Exception exception) {
                     String message = exception.getMessage();
@@ -703,11 +752,18 @@ public class MainActivity extends Activity {
                 if (subjects.isEmpty()) {
                     throw new IOException("搜索结果为空");
                 }
-                Element selectedSubject = subjects.stream()
-                        .filter(element -> normalizeName(element.text())
-                                .equals(normalizeName(requestedName)))
-                        .findFirst()
-                        .orElse(subjects.first());
+                Element selectedSubject = null;
+                int bestScore = 0;
+                for (Element subject : subjects) {
+                    int score = titleScore(subject.text(), requestedName);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        selectedSubject = subject;
+                    }
+                }
+                if (selectedSubject == null || bestScore < 74) {
+                    throw new IOException("搜索结果名称不匹配");
+                }
                 detailUrl = selectedSubject.absUrl("href");
                 if (detailUrl.isBlank()) {
                     throw new IOException("搜索结果没有详情链接");
@@ -1028,12 +1084,175 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void addRequestedName(String value) {
+        if (value == null || value.isBlank()) return;
+        String normalized = normalizeName(value);
+        for (String existing : requestedNames) {
+            if (normalizeName(existing).equals(normalized)) return;
+        }
+        requestedNames.add(value.trim());
+    }
+
+    private List<String> searchNamesFor(SourceConfig source) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        if (!sourceKeywordOverride.isBlank() && source.name.equals(onlySource)) {
+            names.add(sourceKeywordOverride);
+        }
+        String saved = TitleAliasStore.preferredName(this, subjectKey, source.name);
+        if (!saved.isBlank()) names.add(saved);
+        names.addAll(requestedNames);
+        if (names.isEmpty() && requestedName != null && !requestedName.isBlank()) {
+            names.add(requestedName);
+        }
+        ArrayList<String> result = new ArrayList<>();
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        int limit = Math.min(5, Math.max(1, source.searchNameCount));
+        for (String name : names) {
+            if (name == null || name.isBlank() || !normalized.add(normalizeName(name))) continue;
+            result.add(name.trim());
+            if (result.size() >= limit) break;
+        }
+        if (result.isEmpty()) result.add(requestedName);
+        return result;
+    }
+
+    private String searchKeyword(String value, SourceConfig source) {
+        String result = value == null ? "" : value.trim();
+        if (source.searchUseOnlyFirstWord) {
+            String[] words = result.split("\\s+", 2);
+            result = words.length == 0 ? result : words[0];
+        }
+        if (source.searchRemoveSpecial) {
+            result = result.replaceAll("[^\\p{L}\\p{N}\\s]", " ")
+                    .replaceAll("\\s+", " ").trim();
+        }
+        return result;
+    }
+
+    private SubjectCandidate findBestSubject(
+            Document document, SourceConfig source, String searchedName) {
+        SubjectCandidate best = null;
+        if ("indexed".equals(source.subjectFormat)) {
+            Elements names = document.select(source.subjectSelector);
+            Elements links = document.select(source.subjectLinkSelector);
+            for (int index = 0; index < Math.min(names.size(), links.size()); index++) {
+                Element link = findLink(links.get(index));
+                String url = link == null ? "" : link.absUrl("href");
+                SubjectCandidate candidate = new SubjectCandidate(
+                        names.get(index).text().trim(), url,
+                        titleScore(names.get(index).text(), searchedName));
+                if (!url.isBlank() && (best == null || candidate.score > best.score)) {
+                    best = candidate;
+                }
+            }
+        } else {
+            for (Element element : document.select(source.subjectSelector)) {
+                Element link = findLink(element);
+                String url = link == null ? "" : link.absUrl("href");
+                SubjectCandidate candidate = new SubjectCandidate(
+                        element.text().trim(), url, titleScore(element.text(), searchedName));
+                if (!url.isBlank() && (best == null || candidate.score > best.score)) {
+                    best = candidate;
+                }
+            }
+        }
+        return best;
+    }
+
+    private int titleScore(String candidateTitle, String searchedName) {
+        int best = 0;
+        ArrayList<String> expectedNames = new ArrayList<>(requestedNames);
+        expectedNames.add(searchedName);
+        int candidateSeason = extractSeason(candidateTitle);
+        for (String expected : expectedNames) {
+            String candidate = normalizeName(candidateTitle);
+            String wanted = normalizeName(expected);
+            if (candidate.isBlank() || wanted.isBlank()) continue;
+            int score;
+            if (candidate.equals(wanted)) {
+                score = 100;
+            } else if (candidate.contains(wanted) || wanted.contains(candidate)) {
+                int shorter = Math.min(candidate.length(), wanted.length());
+                int longer = Math.max(candidate.length(), wanted.length());
+                score = 82 + Math.round(12f * shorter / Math.max(1, longer));
+            } else {
+                score = similarity(candidate, wanted);
+            }
+            int expectedSeason = extractSeason(expected);
+            if (expectedSeason > 0 && candidateSeason > 0 && expectedSeason != candidateSeason) {
+                score -= 50;
+            } else if (expectedSeason <= 0 && candidateSeason > 1) {
+                score -= 30;
+            } else if (expectedSeason > 0 && expectedSeason == candidateSeason) {
+                score = Math.min(100, score + 5);
+            }
+            best = Math.max(best, score);
+        }
+        return best;
+    }
+
+    private int similarity(String left, String right) {
+        int[] previous = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            int[] current = new int[right.length() + 1];
+            current[0] = i;
+            for (int j = 1; j <= right.length(); j++) {
+                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
+                current[j] = Math.min(Math.min(current[j - 1] + 1, previous[j] + 1),
+                        previous[j - 1] + cost);
+            }
+            previous = current;
+        }
+        int distance = previous[right.length()];
+        return Math.max(0, Math.round(100f * (1f
+                - (float) distance / Math.max(left.length(), right.length()))));
+    }
+
+    private int extractSeason(String value) {
+        if (value == null) return -1;
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .toLowerCase(Locale.ROOT);
+        Matcher chinese = Pattern.compile("第\\s*([0-9一二三四五六七八九十]+)\\s*[季部]")
+                .matcher(normalized);
+        if (chinese.find()) return parseSeasonNumber(chinese.group(1));
+        Matcher english = Pattern.compile("(?:season\\s*|s)(\\d+)|(?:^|\\s)(\\d+)(?:st|nd|rd|th)\\s*season")
+                .matcher(normalized);
+        if (english.find()) {
+            String number = english.group(1) == null ? english.group(2) : english.group(1);
+            try { return Integer.parseInt(number); } catch (Exception ignored) { }
+        }
+        return -1;
+    }
+
+    private int parseSeasonNumber(String value) {
+        try { return Integer.parseInt(value); } catch (Exception ignored) { }
+        String digits = "一二三四五六七八九";
+        if ("十".equals(value)) return 10;
+        int ten = value.indexOf('十');
+        if (ten >= 0) {
+            int high = ten == 0 ? 1 : digits.indexOf(value.charAt(0)) + 1;
+            int low = ten == value.length() - 1 ? 0 : digits.indexOf(value.charAt(ten + 1)) + 1;
+            return high * 10 + Math.max(0, low);
+        }
+        return value.length() == 1 ? digits.indexOf(value.charAt(0)) + 1 : -1;
+    }
+
     private String normalizeName(String value) {
-        return value == null ? "" :
-                value.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+        if (value == null) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]", "");
+    }
+
+    private String safeString(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private record HttpPage(String url, String html) {
+    }
+
+    private record SubjectCandidate(String title, String url, int score) {
     }
 
     private record SourceConfig(
@@ -1050,6 +1269,9 @@ public class MainActivity extends Activity {
             String episodeLinkSelector,
             String episodeNamePattern,
             String defaultResolution,
+            int searchNameCount,
+            boolean searchUseOnlyFirstWord,
+            boolean searchRemoveSpecial,
             int tier
     ) {
     }
@@ -1111,27 +1333,36 @@ public class MainActivity extends Activity {
     }
 
     private void probeSearch() {
-        String expectedName = JSONObject.quote(requestedName);
+        String expectedNames = new org.json.JSONArray(requestedNames).toString();
         String selector = JSONObject.quote(SEARCH_RESULT_SELECTOR);
         String script = """
                 (() => {
-                  const expected = %s.replace(/\\s+/g, '').toLowerCase();
+                  const normalize = value => (value || '').normalize('NFKC').toLowerCase()
+                    .replace(/[\\s\\-—–_·・:：,，.。!！?？'\"“”‘’()（）\\[\\]【】{}]/g, '');
+                  const expected = %s.map(normalize).filter(Boolean);
                   const items = Array.from(document.querySelectorAll(%s));
                   if (!items.length) return '';
-                  const selected = items.find(a =>
-                    (a.textContent || '').replace(/\\s+/g, '').trim().toLowerCase() === expected
-                  ) || items[0];
+                  const selected = items.find(a => expected.includes(normalize(a.textContent)))
+                    || items.find(a => expected.some(name => {
+                      const title = normalize(a.textContent);
+                      return title.includes(name) || name.includes(title);
+                    }));
+                  if (!selected) return '__NO_MATCH__';
                   return JSON.stringify({
                     title: (selected.textContent || '').trim(),
                     url: selected.href
                   });
                 })()
-                """.formatted(expectedName, selector);
+                """.formatted(expectedNames, selector);
 
         webView.evaluateJavascript(script, raw -> {
             String value = decodeJavascriptResult(raw);
             if (value == null || value.isBlank()) {
                 scheduleProbe(1000);
+                return;
+            }
+            if ("__NO_MATCH__".equals(value)) {
+                fail("搜索结果名称不匹配");
                 return;
             }
             try {
@@ -1300,6 +1531,8 @@ public class MainActivity extends Activity {
         Intent playerIntent = new Intent(this, PlayerActivity.class);
         playerIntent.putExtra("video_url", videoUrl);
         playerIntent.putExtra("subject_name", requestedName);
+        playerIntent.putStringArrayListExtra("subject_names", new ArrayList<>(requestedNames));
+        playerIntent.putExtra("subject_key", subjectKey);
         playerIntent.putExtra("subject_cover", subjectCover);
         playerIntent.putExtra("episode", requestedEpisode);
         playerIntent.putExtra("bangumi_id", getIntent().getIntExtra("bangumi_id", 0));
