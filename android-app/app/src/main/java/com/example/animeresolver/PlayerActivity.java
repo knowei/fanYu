@@ -167,6 +167,7 @@ public class PlayerActivity extends Activity {
     private String currentSourceName = "";
     private long resumePosition;
     private BottomSheetDialog sourceDialog;
+    private String pendingSourceCorrection = "";
     private LinearLayout sourceListContainer;
     private TextView sourceSummaryView;
     private ScrollView sourceScrollView;
@@ -293,12 +294,6 @@ public class PlayerActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
-    @Override
-    public void finish() {
-        super.finish();
-        overridePendingTransition(R.anim.activity_return_from_left, R.anim.activity_exit_to_right);
     }
 
     @Override
@@ -1277,7 +1272,6 @@ public class PlayerActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(30)));
         sourceListContainer = new LinearLayout(this);
         sourceListContainer.setOrientation(LinearLayout.VERTICAL);
-        UiMotion.animateLayout(sourceListContainer);
         sourceScrollView = new ScrollView(this);
         sourceScrollView.addView(sourceListContainer);
         sheet.addView(sourceScrollView, new LinearLayout.LayoutParams(
@@ -1288,13 +1282,27 @@ public class PlayerActivity extends Activity {
             sourceListContainer = null;
             sourceSummaryView = null;
             sourceScrollView = null;
+            String correctionSource = pendingSourceCorrection;
+            pendingSourceCorrection = "";
+            if (!correctionSource.isBlank()) {
+                rootView.post(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        showSourceTitleCorrection(correctionSource);
+                    }
+                });
+            }
         });
         renderSourcePicker();
         sourceDialog.setOnShowListener(dialog -> {
             android.widget.FrameLayout bottomSheet = sourceDialog.findViewById(
                     com.google.android.material.R.id.design_bottom_sheet);
             if (bottomSheet == null) return;
-            int availableHeight = getWindow().getDecorView().getHeight();
+            View behaviorParent = (View) bottomSheet.getParent();
+            int availableHeight = behaviorParent == null ? 0 : behaviorParent.getHeight();
+            if (availableHeight <= 0) {
+                availableHeight = sourceDialog.getWindow() == null ? 0
+                        : sourceDialog.getWindow().getDecorView().getHeight();
+            }
             if (availableHeight <= 0) {
                 availableHeight = getResources().getDisplayMetrics().heightPixels;
             }
@@ -1309,8 +1317,10 @@ public class PlayerActivity extends Activity {
 
             BottomSheetBehavior<android.widget.FrameLayout> behavior =
                     BottomSheetBehavior.from(bottomSheet);
-            behavior.setFitToContents(true);
+            behavior.setFitToContents(false);
             behavior.setSkipCollapsed(true);
+            behavior.setDraggable(false);
+            behavior.setExpandedOffset(Math.max(0, availableHeight - targetHeight));
             behavior.setPeekHeight(targetHeight, false);
             behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
         });
@@ -1319,153 +1329,187 @@ public class PlayerActivity extends Activity {
 
     private void renderSourcePicker() {
         if (sourceListContainer == null || sourceSummaryView == null) return;
-        boolean keepTop = sourceScrollView != null && sourceScrollView.getScrollY() < dp(20);
+        int previousScrollY = sourceScrollView == null ? 0 : sourceScrollView.getScrollY();
+        boolean keepTop = previousScrollY < dp(20);
+        sourceListContainer.suppressLayout(true);
         sourceListContainer.removeAllViews();
+
+        LinkedHashMap<String, java.util.List<Map.Entry<String, SourceState>>> grouped =
+                new LinkedHashMap<>();
         int loading = 0;
         int ready = 0;
         int failed = 0;
-        for (SourceState state : sourceStates.values()) {
+        for (Map.Entry<String, SourceState> entry : sourceStates.entrySet()) {
+            String site = SourceMetricsStore.baseName(entry.getKey());
+            grouped.computeIfAbsent(site, ignored -> new ArrayList<>()).add(entry);
+            SourceState state = entry.getValue();
             if (SOURCE_LOADING.equals(state.status)) loading++;
             else if (SOURCE_READY.equals(state.status)) ready++;
             else if (SOURCE_FAILED.equals(state.status)) failed++;
         }
-        sourceSummaryView.setText("全部 " + sourceStates.size() + " · 可用 " + ready
+        sourceSummaryView.setText("网站 " + grouped.size() + " · 可用线路 " + ready
                 + " · 解析中 " + loading + " · 失败 " + failed);
-        if (sourceStates.isEmpty()) {
+        if (grouped.isEmpty()) {
             TextView empty = text("正在读取视频源列表…", 15, MUTED, false);
             empty.setGravity(Gravity.CENTER);
             sourceListContainer.addView(empty, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(100)));
+            sourceListContainer.suppressLayout(false);
             return;
         }
-        java.util.List<Map.Entry<String, SourceState>> ordered =
-                new java.util.ArrayList<>(sourceStates.entrySet());
-        ordered.sort(java.util.Comparator.comparingInt(entry -> sourceRank(
+        java.util.List<Map.Entry<String, java.util.List<Map.Entry<String, SourceState>>>> ordered =
+                new ArrayList<>(grouped.entrySet());
+        ordered.sort(java.util.Comparator.comparingInt(entry -> sourceGroupRank(
                 entry.getKey(), entry.getValue())));
         String recommendedSource = SourceMetricsStore.recommended(this, sourceStates.keySet());
         boolean recommendationShown = false;
-        for (Map.Entry<String, SourceState> entry : ordered) {
+        for (Map.Entry<String, java.util.List<Map.Entry<String, SourceState>>> entry : ordered) {
             boolean recommended = !recommendationShown && !recommendedSource.isBlank()
-                    && recommendedSource.equals(SourceMetricsStore.baseName(entry.getKey()));
-            sourceListContainer.addView(sourceRow(entry.getKey(), entry.getValue(), recommended));
+                    && recommendedSource.equals(entry.getKey());
+            sourceListContainer.addView(sourceGroupCard(entry.getKey(), entry.getValue(), recommended));
             if (recommended) recommendationShown = true;
         }
+        sourceListContainer.suppressLayout(false);
+        sourceListContainer.requestLayout();
         ScrollView scroll = sourceScrollView;
-        if (keepTop && scroll != null) {
-            scroll.post(() -> scroll.scrollTo(0, 0));
+        if (scroll != null) {
+            scroll.post(() -> scroll.scrollTo(0, keepTop ? 0 : previousScrollY));
         }
     }
 
-    private int sourceRank(String name, SourceState state) {
-        if (name.equals(currentSourceName)) return 0;
-        int statusRank = SOURCE_READY.equals(state.status) ? 1
-                : SOURCE_LOADING.equals(state.status) ? 2 : 3;
-        return statusRank * 10_000 + SourceMetricsStore.displayPriority(this, name);
+    private int sourceGroupRank(String site, java.util.List<Map.Entry<String, SourceState>> routes) {
+        boolean current = routes.stream().anyMatch(route -> route.getKey().equals(currentSourceName));
+        boolean ready = routes.stream().anyMatch(route -> SOURCE_READY.equals(route.getValue().status)
+                && !route.getValue().url.isBlank());
+        boolean loading = routes.stream().anyMatch(route -> SOURCE_LOADING.equals(route.getValue().status));
+        int status = current ? 0 : ready ? 1 : loading ? 2 : 3;
+        return status * 10_000 + SourceMetricsStore.displayPriority(this, site);
     }
 
-    private View sourceRow(String name, SourceState state, boolean recommended) {
-        boolean current = name.equals(currentSourceName);
-        boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
-        boolean retryable = SOURCE_FAILED.equals(state.status) && !state.url.isBlank();
-        String siteName = name;
-        String channelName = "";
-        int separator = name.indexOf(" · ");
-        if (separator >= 0) {
-            siteName = name.substring(0, separator);
-            channelName = name.substring(separator + 3);
+    private View sourceGroupCard(
+            String site, java.util.List<Map.Entry<String, SourceState>> routes, boolean recommended) {
+        boolean current = routes.stream().anyMatch(route -> route.getKey().equals(currentSourceName));
+        int ready = 0;
+        int loading = 0;
+        int failed = 0;
+        for (Map.Entry<String, SourceState> route : routes) {
+            if (SOURCE_READY.equals(route.getValue().status) && !route.getValue().url.isBlank()) ready++;
+            else if (SOURCE_LOADING.equals(route.getValue().status)) loading++;
+            else if (SOURCE_FAILED.equals(route.getValue().status)) failed++;
         }
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(14), dp(10), dp(12), dp(10));
-        row.setBackground(rounded(current ? Color.rgb(235, 243, 255) : Color.WHITE,
-                12, current ? Color.rgb(184, 211, 255) : LINE, 1));
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(8), dp(12), dp(8));
+        card.setBackground(rounded(current ? Color.rgb(235, 243, 255) : Color.WHITE,
+                13, current ? Color.rgb(184, 211, 255) : LINE, 1));
 
-        if (SOURCE_LOADING.equals(state.status)) {
-            ProgressBar progress = new ProgressBar(this);
-            progress.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
-            row.addView(progress, new LinearLayout.LayoutParams(dp(24), dp(24)));
-        } else {
-            View dot = new View(this);
-            int color = SOURCE_READY.equals(state.status)
-                    ? Color.rgb(31, 157, 85) : Color.rgb(220, 68, 74);
-            dot.setBackground(rounded(color, 6, 0, 0));
-            LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(12), dp(12));
-            dotParams.setMargins(dp(6), 0, dp(6), 0);
-            row.addView(dot, dotParams);
-        }
-
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        View indicator = new View(this);
+        int indicatorColor = ready > 0 ? Color.rgb(31, 157, 85)
+                : loading > 0 ? BLUE : Color.rgb(220, 68, 74);
+        indicator.setBackground(rounded(indicatorColor, 6, 0, 0));
+        LinearLayout.LayoutParams indicatorParams = new LinearLayout.LayoutParams(dp(12), dp(12));
+        indicatorParams.setMargins(dp(4), 0, dp(10), 0);
+        header.addView(indicator, indicatorParams);
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
-        labels.setPadding(dp(12), 0, dp(8), 0);
-        TextView sourceName = text(siteName, 16, INK, true);
-        labels.addView(sourceName, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(28)));
-        String detail;
-        int detailColor = MUTED;
-        if (current && SOURCE_LOADING.equals(state.status)) {
-            detail = "当前源正在加载…";
-            detailColor = BLUE;
-        } else if (current && SOURCE_FAILED.equals(state.status)) {
-            detail = "当前源加载失败 · " + compactError(state.error);
-            detailColor = Color.rgb(190, 52, 60);
-        } else if (current) {
-            detail = "当前播放 · 可用";
-            detailColor = BLUE;
-        } else if (SOURCE_LOADING.equals(state.status)) {
-            detail = "解析中…";
-        } else if (ready) {
-            detail = "可播放";
-        } else {
-            detail = "加载失败" + (state.error.isBlank() ? "" : " · " + compactError(state.error));
-            detailColor = Color.rgb(190, 52, 60);
+        TextView name = text(site, 16, INK, true);
+        labels.addView(name, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(25)));
+        String summary = (recommended ? "智能推荐 · " : "") + "可用 " + ready
+                + " · 解析中 " + loading + " · 失败 " + failed;
+        TextView summaryView = text(summary, 12, current ? BLUE : MUTED, false);
+        labels.addView(summaryView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(21)));
+        header.addView(labels, new LinearLayout.LayoutParams(0, dp(50), 1));
+        String siteUrl = "";
+        for (Map.Entry<String, SourceState> route : routes) {
+            if (!route.getValue().siteUrl.isBlank()) {
+                siteUrl = route.getValue().siteUrl;
+                break;
+            }
         }
-        if (!channelName.isBlank()) detail = channelName + " · " + detail;
-        if (recommended) detail = "智能推荐 · " + detail;
-        TextView detailView = text(detail, 13, detailColor, false);
-        detailView.setMaxLines(1);
-        detailView.setEllipsize(TextUtils.TruncateAt.END);
-        labels.addView(detailView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
-        row.addView(labels, new LinearLayout.LayoutParams(0, dp(52), 1));
-
-        boolean needsVerification = SOURCE_FAILED.equals(state.status)
-                && state.error.contains("验证") && !state.siteUrl.isBlank();
-        String actionText = needsVerification ? "去验证"
-                : retryable ? "重试" : current ? "使用中" : ready ? "切换" : "";
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-        TextView action = text(actionText, 14,
-                current || ready || retryable ? BLUE : MUTED, current && !retryable);
-        action.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        actions.addView(action, new LinearLayout.LayoutParams(dp(76), dp(28)));
-        TextView visit = text(state.siteUrl.isBlank() ? "" :
-                needsVerification ? "应用内验证" : "访问网站", 12, BLUE, false);
+        TextView visit = text(siteUrl.isBlank() ? "" : "访问网站", 12, BLUE, false);
         visit.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        if (!state.siteUrl.isBlank()) {
-            visit.setOnClickListener(v -> {
-                if (needsVerification) openVerificationSite(state.siteUrl);
-                else openSourceSite(state.siteUrl);
-            });
+        if (!siteUrl.isBlank()) {
+            String finalSiteUrl = siteUrl;
+            visit.setOnClickListener(v -> openSourceSite(finalSiteUrl));
         }
-        actions.addView(visit, new LinearLayout.LayoutParams(dp(76), dp(24)));
-        row.addView(actions, new LinearLayout.LayoutParams(dp(76), dp(52)));
-        row.setContentDescription(siteName + "，" + detail + (actionText.isBlank()
-                ? "" : "，" + actionText));
-        if ((ready && !current) || retryable) row.setOnClickListener(v -> {
-            playUrl(name, state.url);
-            if (sourceDialog != null) sourceDialog.dismiss();
-        });
-        String correctionSourceName = SourceMetricsStore.baseName(name);
-        row.setOnLongClickListener(v -> {
-            showSourceTitleCorrection(correctionSourceName);
+        actions.addView(visit, new LinearLayout.LayoutParams(dp(66), dp(25)));
+        TextView edit = text("长按改名", 12, BLUE, false);
+        edit.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        actions.addView(edit, new LinearLayout.LayoutParams(dp(66), dp(25)));
+        header.addView(actions, new LinearLayout.LayoutParams(dp(66), dp(50)));
+        header.setOnLongClickListener(v -> {
+            requestSourceTitleCorrection(site);
             return true;
         });
+        card.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        for (Map.Entry<String, SourceState> route : routes) {
+            card.addView(sourceChannelRow(site, route.getKey(), route.getValue()));
+        }
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, dp(5), 0, dp(5));
-        row.setLayoutParams(params);
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private View sourceChannelRow(String site, String key, SourceState state) {
+        boolean current = key.equals(currentSourceName);
+        boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
+        boolean retryable = SOURCE_FAILED.equals(state.status) && !state.url.isBlank();
+        boolean needsVerification = SOURCE_FAILED.equals(state.status)
+                && state.error.contains("验证") && !state.siteUrl.isBlank();
+        String channel = key.startsWith(site + " · ") ? key.substring(site.length() + 3) : "默认线路";
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(5), dp(4), dp(5));
+        row.setBackground(rounded(current ? Color.rgb(222, 236, 255) : Color.rgb(248, 250, 253),
+                9, Color.TRANSPARENT, 0));
+        TextView channelView = text(channel, 14, INK, current);
+        channelView.setSingleLine(true);
+        channelView.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(channelView, new LinearLayout.LayoutParams(0, dp(38), 1));
+        String status = current ? "播放中" : ready ? "可播放"
+                : SOURCE_LOADING.equals(state.status) ? "解析中" : "失败";
+        TextView statusView = text(status, 12,
+                current || ready ? BLUE : SOURCE_LOADING.equals(state.status) ? MUTED
+                        : Color.rgb(190, 52, 60), false);
+        statusView.setGravity(Gravity.CENTER);
+        row.addView(statusView, new LinearLayout.LayoutParams(dp(50), dp(38)));
+        String actionLabel = needsVerification ? "验证" : retryable ? "重试"
+                : current ? "使用中" : ready ? "播放" : "";
+        TextView action = text(actionLabel, 13, current ? MUTED : BLUE, current);
+        action.setGravity(Gravity.CENTER);
+        row.addView(action, new LinearLayout.LayoutParams(dp(54), dp(38)));
+        View.OnClickListener useRoute = v -> {
+            if (needsVerification) openVerificationSite(state.siteUrl);
+            else if ((ready && !current) || retryable) {
+                playUrl(key, state.url);
+                if (sourceDialog != null) sourceDialog.dismiss();
+            }
+        };
+        if (needsVerification || (ready && !current) || retryable) {
+            row.setOnClickListener(useRoute);
+            action.setOnClickListener(useRoute);
+        }
         return row;
+    }
+
+    private void requestSourceTitleCorrection(String sourceName) {
+        BottomSheetDialog activeDialog = sourceDialog;
+        if (activeDialog != null) {
+            pendingSourceCorrection = sourceName;
+            activeDialog.dismiss();
+        } else if (!isFinishing() && !isDestroyed()) {
+            showSourceTitleCorrection(sourceName);
+        }
     }
 
     private void showSourceTitleCorrection(String sourceName) {
@@ -1501,6 +1545,9 @@ public class PlayerActivity extends Activity {
                 .create();
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
+                dialog.getWindow().clearFlags(
+                        WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+                                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
                 dialog.getWindow().setSoftInputMode(
                         WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
                                 | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);

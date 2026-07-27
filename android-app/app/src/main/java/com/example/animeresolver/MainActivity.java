@@ -374,7 +374,11 @@ public class MainActivity extends Activity {
                     sourceSearchUrls.put(source.name, source.searchUrl.replace(
                             "{keyword}", Uri.encode(searchKeyword(firstKeyword, source))));
                 }
-                PlayerActivity.beginSourceResolution(requestedEpisode, sourceSearchUrls);
+                // A corrected title retries one website only. Do not replace the episode's
+                // existing source cache, otherwise every already-resolved website disappears.
+                if (onlySource.isBlank()) {
+                    PlayerActivity.beginSourceResolution(requestedEpisode, sourceSearchUrls);
+                }
                 for (java.util.Map.Entry<String, String> source : sourceSearchUrls.entrySet()) {
                     broadcastSourceState(source.getKey(), PlayerActivity.SOURCE_LOADING,
                             "", "", source.getValue());

@@ -733,7 +733,6 @@ public class DetailActivity extends Activity {
         intent.putExtra("available_episodes", availableEpisodes);
         intent.putStringArrayListExtra("episode_titles", new ArrayList<>(episodeTitles));
         startActivity(intent);
-        overridePendingTransition(R.anim.activity_enter_from_right, R.anim.activity_exit_to_left);
         content.postDelayed(() -> openingPlayer = false, 450L);
     }
 
