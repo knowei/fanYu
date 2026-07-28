@@ -179,6 +179,9 @@ public class PlayerActivity extends Activity {
     private EditText discussionInput;
     private boolean fullscreen;
     private float playbackSpeed = 1f;
+    private String pendingSiteFallback = "";
+    private TextView nextEpisodePrompt;
+    private int nextEpisodeCountdown;
     private float speedBeforeHold = 1f;
     private float touchDownX;
     private float touchDownY;
@@ -206,6 +209,21 @@ public class PlayerActivity extends Activity {
         }
     };
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private final Runnable nextEpisodeTicker = new Runnable() {
+        @Override public void run() {
+            if (nextEpisodeCountdown <= 0) {
+                hideNextEpisodeCountdown();
+                resolveEpisode(episode + 1);
+                return;
+            }
+            if (nextEpisodePrompt != null) {
+                nextEpisodePrompt.setText(nextEpisodeCountdown + " 秒后自动播放下一集  ·  点击取消");
+                nextEpisodePrompt.setVisibility(View.VISIBLE);
+            }
+            nextEpisodeCountdown--;
+            progressHandler.postDelayed(this, 1000L);
+        }
+    };
     private final Runnable progressUpdater = new Runnable() {
         @Override public void run() {
             if (player != null && player.getDuration() > 0 && !progressBar.isPressed()) {
@@ -220,6 +238,10 @@ public class PlayerActivity extends Activity {
         @Override public void onPlaybackStateChanged(int playbackState) {
             if (bufferingIndicator != null) bufferingIndicator.setVisibility(
                     playbackState == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
+            if (playbackState == Player.STATE_ENDED) {
+                startNextEpisodeCountdown();
+                return;
+            }
             if (playbackState != Player.STATE_READY || currentSourceName.isBlank()) return;
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null || state.url.isBlank()) return;
@@ -241,7 +263,6 @@ public class PlayerActivity extends Activity {
 
         @Override public void onPlayerError(PlaybackException error) {
             if (bufferingIndicator != null) bufferingIndicator.setVisibility(View.GONE);
-            showGestureHint("播放失败，请切换视频源", 1400);
             if (currentSourceName.isBlank()) return;
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null) return;
@@ -252,6 +273,20 @@ public class PlayerActivity extends Activity {
                     new SourceState(SOURCE_FAILED, state.url, message, state.siteUrl));
             cacheSourceState(episode, currentSourceName,
                     SOURCE_FAILED, state.url, message, state.siteUrl);
+            String fallback = findReadyFallback(currentSourceName);
+            if (!fallback.isBlank()) {
+                SourceState candidate = sourceStates.get(fallback);
+                showGestureHint("当前线路失败，已切换到 " + compactSourceName(fallback), 1500);
+                playUrl(fallback, candidate.url);
+                return;
+            }
+            String site = SourceMetricsStore.baseName(currentSourceName);
+            if (hasLoadingFallback(site)) {
+                pendingSiteFallback = site;
+                showGestureHint("当前线路失败，正在尝试同站其它线路", 1600);
+            } else {
+                showGestureHint("播放失败，请切换视频源", 1400);
+            }
             updateSourceStatus();
             renderSourcePicker();
         }
@@ -285,7 +320,15 @@ public class PlayerActivity extends Activity {
             if (SOURCE_READY.equals(status) && url != null && !url.isBlank()) {
                 boolean shouldAutoPlay = videoUrl == null || videoUrl.isBlank();
                 sources.put(name, url);
-                if (shouldAutoPlay) playUrl(name, url);
+                boolean isPendingFallback = !pendingSiteFallback.isBlank()
+                        && pendingSiteFallback.equals(SourceMetricsStore.baseName(name));
+                if (shouldAutoPlay || isPendingFallback) {
+                    pendingSiteFallback = "";
+                    if (isPendingFallback) {
+                        showGestureHint("已切换到同站线路 " + compactSourceName(name), 1500);
+                    }
+                    playUrl(name, url);
+                }
             }
             updateSourceStatus();
             renderSourcePicker();
@@ -315,6 +358,11 @@ public class PlayerActivity extends Activity {
         selectedEpisodeRange = (episode - 1) / EPISODES_PER_RANGE;
         initialSourceName = getIntent().getStringExtra("source_name");
         resumePosition = Math.max(0L, getIntent().getLongExtra("resume_position", 0L));
+        if (resumePosition == 0L) {
+            resumePosition = WatchHistoryStore.resumePosition(this, bangumiId, subjectName, episode);
+        }
+        playbackSpeed = getSharedPreferences("playback_preferences", MODE_PRIVATE)
+                .getFloat("speed:" + subjectKey, 1f);
         sourceStates.putAll(cachedSourceStates(episode));
         sources.putAll(cachedSources(episode));
         if (initialSourceName != null && videoUrl != null) {
@@ -409,6 +457,21 @@ public class PlayerActivity extends Activity {
         android.widget.FrameLayout.LayoutParams hintParams =
                 new android.widget.FrameLayout.LayoutParams(-2, dp(42), Gravity.CENTER);
         videoFrame.addView(gestureHintView, hintParams);
+        nextEpisodePrompt = text("", 15, Color.WHITE, true);
+        nextEpisodePrompt.setGravity(Gravity.CENTER);
+        nextEpisodePrompt.setPadding(dp(16), dp(10), dp(16), dp(10));
+        nextEpisodePrompt.setBackground(rounded(Color.argb(226, 20, 24, 29), 14,
+                Color.argb(80, 255, 255, 255), 1));
+        nextEpisodePrompt.setVisibility(View.GONE);
+        nextEpisodePrompt.setOnClickListener(v -> {
+            hideNextEpisodeCountdown();
+            showGestureHint("已取消自动播放", 900);
+        });
+        android.widget.FrameLayout.LayoutParams nextParams =
+                new android.widget.FrameLayout.LayoutParams(-2, dp(46),
+                        Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+        nextParams.setMargins(dp(12), 0, dp(12), dp(98));
+        videoFrame.addView(nextEpisodePrompt, nextParams);
         addPlayerControls();
         android.widget.FrameLayout.LayoutParams controlsParams =
                 new android.widget.FrameLayout.LayoutParams(
@@ -594,7 +657,7 @@ public class PlayerActivity extends Activity {
         playbackTimeView = text("00:00 / 00:00", 13, Color.WHITE, false);
         actions.addView(playbackTimeView, new LinearLayout.LayoutParams(dp(118), dp(42)));
         actions.addView(new View(this), new LinearLayout.LayoutParams(0, dp(42), 1));
-        speedButton = dockTextButton("1.0×");
+        speedButton = dockTextButton(speedLabel(playbackSpeed));
         speedButton.setOnClickListener(v -> showSpeedPicker());
         actions.addView(speedButton, new LinearLayout.LayoutParams(dp(52), dp(42)));
         dockSourceButton = new Button(this);
@@ -958,6 +1021,8 @@ public class PlayerActivity extends Activity {
 
     private void setPlaybackSpeed(float speed) {
         playbackSpeed = speed;
+        getSharedPreferences("playback_preferences", MODE_PRIVATE).edit()
+                .putFloat("speed:" + subjectKey, speed).apply();
         if (player != null) player.setPlaybackSpeed(speed);
         if (speedButton != null) speedButton.setText(speedLabel(speed));
         showGestureHint("已切换至 " + speedLabel(speed), 700);
@@ -1205,6 +1270,7 @@ public class PlayerActivity extends Activity {
     }
 
     private void playUrl(String sourceName, String url) {
+        hideNextEpisodeCountdown();
         videoUrl = url;
         currentSourceName = sourceName;
         SourceState previous = sourceStates.get(sourceName);
@@ -1233,6 +1299,40 @@ public class PlayerActivity extends Activity {
         value.addListener(playbackListener);
         value.setPlaybackSpeed(playbackSpeed);
         return value;
+    }
+
+    private String findReadyFallback(String failedSource) {
+        String site = SourceMetricsStore.baseName(failedSource);
+        for (Map.Entry<String, SourceState> entry : sourceStates.entrySet()) {
+            SourceState candidate = entry.getValue();
+            if (!entry.getKey().equals(failedSource)
+                    && site.equals(SourceMetricsStore.baseName(entry.getKey()))
+                    && SOURCE_READY.equals(candidate.status) && !candidate.url.isBlank()) {
+                return entry.getKey();
+            }
+        }
+        return "";
+    }
+
+    private boolean hasLoadingFallback(String site) {
+        for (Map.Entry<String, SourceState> entry : sourceStates.entrySet()) {
+            if (site.equals(SourceMetricsStore.baseName(entry.getKey()))
+                    && SOURCE_LOADING.equals(entry.getValue().status)) return true;
+        }
+        return false;
+    }
+
+    private void startNextEpisodeCountdown() {
+        if (episode >= availableEpisodes || nextEpisodePrompt == null) return;
+        hideNextEpisodeCountdown();
+        nextEpisodeCountdown = 5;
+        progressHandler.post(nextEpisodeTicker);
+    }
+
+    private void hideNextEpisodeCountdown() {
+        nextEpisodeCountdown = 0;
+        progressHandler.removeCallbacks(nextEpisodeTicker);
+        if (nextEpisodePrompt != null) nextEpisodePrompt.setVisibility(View.GONE);
     }
 
     private void updateSourceStatus() {
@@ -1635,6 +1735,7 @@ public class PlayerActivity extends Activity {
 
     private void resolveEpisode(int targetEpisode) {
         if (targetEpisode == episode) return;
+        hideNextEpisodeCountdown();
         requestResolution(targetEpisode, true);
     }
 
@@ -1807,6 +1908,7 @@ public class PlayerActivity extends Activity {
     @Override
     protected void onStop() {
         super.onStop();
+        hideNextEpisodeCountdown();
         if (player != null) {
             saveWatchHistory();
             player.pause();
@@ -1827,6 +1929,7 @@ public class PlayerActivity extends Activity {
         progressHandler.removeCallbacks(hideControls);
         progressHandler.removeCallbacks(startHoldSpeed);
         progressHandler.removeCallbacks(hideGestureHint);
+        progressHandler.removeCallbacks(nextEpisodeTicker);
         if (pendingSingleTap != null) progressHandler.removeCallbacks(pendingSingleTap);
         unregisterReceiver(sourceReceiver);
         if (player != null) player.release();

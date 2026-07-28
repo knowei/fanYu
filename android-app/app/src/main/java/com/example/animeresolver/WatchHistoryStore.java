@@ -86,6 +86,23 @@ final class WatchHistoryStore {
         }
     }
 
+    /** Returns a resume point only for the same episode, excluding finished episodes. */
+    static synchronized long resumePosition(Context context, int bangumiId, String name, int episode) {
+        JSONArray history = read(context);
+        for (int index = 0; index < history.length(); index++) {
+            JSONObject item = history.optJSONObject(index);
+            if (item == null) continue;
+            boolean sameId = bangumiId > 0 && bangumiId == item.optInt("bangumiId", 0);
+            boolean sameName = name != null && name.equals(item.optString("name"));
+            if ((!sameId && !sameName) || episode != item.optInt("episode", 0)) continue;
+            long position = Math.max(0L, item.optLong("position", 0L));
+            long duration = Math.max(0L, item.optLong("duration", 0L));
+            if (position < 5_000L || (duration > 0L && position >= duration - 15_000L)) return 0L;
+            return position;
+        }
+        return 0L;
+    }
+
     static synchronized void remove(Context context, JSONObject target) {
         JSONArray current = read(context);
         JSONArray updated = new JSONArray();
