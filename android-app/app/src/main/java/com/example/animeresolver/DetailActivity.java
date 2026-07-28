@@ -488,7 +488,7 @@ public class DetailActivity extends Activity {
         expand.setIconSize(dp(18));
         expand.setIconPadding(dp(4));
         expand.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_END);
-        expand.setBackgroundTintList(ColorStateList.valueOf(Color.rgb(234, 242, 255)));
+        expand.setBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
         expand.setRippleColor(ColorStateList.valueOf(Color.argb(24, 20, 105, 245)));
         expand.setCornerRadius(dp(18));
         expand.setInsetTop(0);
@@ -514,9 +514,9 @@ public class DetailActivity extends Activity {
         });
         LinearLayout expandHolder = new LinearLayout(this);
         expandHolder.setGravity(Gravity.CENTER);
-        expandHolder.addView(expand, new LinearLayout.LayoutParams(dp(118), dp(38)));
+        expandHolder.addView(expand, new LinearLayout.LayoutParams(dp(106), dp(34)));
         content.addView(expandHolder, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
         summary.post(() -> {
             if (summary.getLayout() == null || summary.getLineCount() < 5
                     || summary.getLayout().getEllipsisCount(4) == 0) {
@@ -590,11 +590,13 @@ public class DetailActivity extends Activity {
             button.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             button.setMaxLines(2);
             button.setEllipsize(TextUtils.TruncateAt.END);
+            button.setIncludeFontPadding(false);
+            button.setLineSpacing(dp(2), 1f);
             button.setMinWidth(0);
             button.setMinimumWidth(0);
             button.setMinHeight(0);
             button.setMinimumHeight(0);
-            button.setPadding(dp(14), dp(6), dp(12), dp(6));
+            button.setPadding(dp(14), dp(8), dp(12), dp(8));
             button.setStateListAnimator(null);
             button.setTag(value);
             styleEpisode(button, value == selectedEpisode);
@@ -696,7 +698,7 @@ public class DetailActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams episodeCellParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(72), 1);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(82), 1);
         params.setMargins(dp(4), dp(3), dp(4), dp(3));
         return params;
     }

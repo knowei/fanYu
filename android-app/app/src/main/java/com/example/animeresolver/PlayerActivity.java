@@ -162,6 +162,7 @@ public class PlayerActivity extends Activity {
     private Button previousEpisodeButton;
     private Button nextEpisodeButton;
     private LinearLayout fullscreenPickerPanel;
+    private TextView fullscreenTitleOverlay;
     private TextView gestureHintView;
     private ProgressBar bufferingIndicator;
     private String currentSourceName = "";
@@ -431,6 +432,17 @@ public class PlayerActivity extends Activity {
         playerView.setUseController(false);
         videoFrame.addView(playerView, new android.widget.FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        fullscreenTitleOverlay = text("", 16, Color.WHITE, true);
+        fullscreenTitleOverlay.setSingleLine(true);
+        fullscreenTitleOverlay.setEllipsize(TextUtils.TruncateAt.END);
+        fullscreenTitleOverlay.setPadding(dp(14), 0, dp(14), 0);
+        fullscreenTitleOverlay.setBackground(rounded(Color.argb(128, 12, 16, 22), 14,
+                Color.TRANSPARENT, 0));
+        fullscreenTitleOverlay.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams fullscreenTitleParams =
+                new android.widget.FrameLayout.LayoutParams(dp(260), dp(42), Gravity.TOP | Gravity.START);
+        fullscreenTitleParams.setMargins(dp(18), dp(16), 0, 0);
+        videoFrame.addView(fullscreenTitleOverlay, fullscreenTitleParams);
         if ((videoUrl == null || videoUrl.isBlank()) && !subjectCover.isBlank()) {
             previewImage = new ImageView(this);
             previewImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -476,7 +488,9 @@ public class PlayerActivity extends Activity {
         android.widget.FrameLayout.LayoutParams controlsParams =
                 new android.widget.FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM);
+        controlsParams.setMargins(dp(10), 0, dp(10), dp(10));
         videoFrame.addView(controlDock, controlsParams);
+        updateControlDockStyle();
         playerArea.addView(videoFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(221)));
         rootView.addView(playerArea, new LinearLayout.LayoutParams(
@@ -630,8 +644,9 @@ public class PlayerActivity extends Activity {
     private void addPlayerControls() {
         controlDock = new LinearLayout(this);
         controlDock.setOrientation(LinearLayout.VERTICAL);
-        controlDock.setPadding(dp(12), dp(2), dp(8), dp(6));
-        controlDock.setBackgroundColor(Color.argb(224, 20, 24, 29));
+        controlDock.setPadding(dp(12), 0, dp(8), dp(4));
+        controlDock.setBackground(rounded(Color.argb(222, 18, 22, 29), 16,
+                Color.argb(45, 255, 255, 255), 1));
         progressBar = new SeekBar(this);
         progressBar.setMax(1000);
         progressBar.setProgressTintList(ColorStateList.valueOf(BLUE));
@@ -644,7 +659,7 @@ public class PlayerActivity extends Activity {
                 if (player != null && player.getDuration() > 0) player.seekTo(player.getDuration() * bar.getProgress() / 1000);
             }
         });
-        controlDock.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));
+        controlDock.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         playPauseButton = videoIcon(R.drawable.ic_play_24);
@@ -653,36 +668,40 @@ public class PlayerActivity extends Activity {
             if (player.isPlaying()) player.pause(); else player.play();
             showControlsTemporarily();
         });
-        actions.addView(playPauseButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
+        actions.addView(playPauseButton, new LinearLayout.LayoutParams(dp(46), dp(38)));
+        previousEpisodeButton = videoIcon(R.drawable.ic_skip_previous_24);
+        previousEpisodeButton.setContentDescription("上一集");
+        previousEpisodeButton.setOnClickListener(v -> resolveEpisode(episode - 1));
+        previousEpisodeButton.setVisibility(View.GONE);
+        actions.addView(previousEpisodeButton, new LinearLayout.LayoutParams(dp(40), dp(38)));
+        nextEpisodeButton = videoIcon(R.drawable.ic_skip_next_24);
+        nextEpisodeButton.setContentDescription("下一集");
+        nextEpisodeButton.setOnClickListener(v -> resolveEpisode(episode + 1));
+        nextEpisodeButton.setVisibility(View.GONE);
+        actions.addView(nextEpisodeButton, new LinearLayout.LayoutParams(dp(40), dp(38)));
         playbackTimeView = text("00:00 / 00:00", 13, Color.WHITE, false);
-        actions.addView(playbackTimeView, new LinearLayout.LayoutParams(dp(118), dp(42)));
-        actions.addView(new View(this), new LinearLayout.LayoutParams(0, dp(42), 1));
+        actions.addView(playbackTimeView, new LinearLayout.LayoutParams(dp(118), dp(38)));
+        actions.addView(new View(this), new LinearLayout.LayoutParams(0, dp(38), 1));
         speedButton = dockTextButton(speedLabel(playbackSpeed));
         speedButton.setOnClickListener(v -> showSpeedPicker());
-        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(52), dp(42)));
+        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(52), dp(38)));
         dockSourceButton = new Button(this);
         dockSourceButton.setText("自动");
         dockSourceButton.setTextColor(Color.WHITE);
         dockSourceButton.setTextSize(12);
         dockSourceButton.setAllCaps(false);
+        dockSourceButton.setSingleLine(true);
+        dockSourceButton.setEllipsize(TextUtils.TruncateAt.END);
         dockSourceButton.setBackgroundColor(Color.TRANSPARENT);
         dockSourceButton.setOnClickListener(v -> showSourcePicker());
-        actions.addView(dockSourceButton, new LinearLayout.LayoutParams(dp(62), dp(42)));
-        previousEpisodeButton = dockTextButton("上一集");
-        previousEpisodeButton.setOnClickListener(v -> resolveEpisode(episode - 1));
-        previousEpisodeButton.setVisibility(View.GONE);
-        actions.addView(previousEpisodeButton, new LinearLayout.LayoutParams(dp(54), dp(42)));
-        nextEpisodeButton = dockTextButton("下一集");
-        nextEpisodeButton.setOnClickListener(v -> resolveEpisode(episode + 1));
-        nextEpisodeButton.setVisibility(View.GONE);
-        actions.addView(nextEpisodeButton, new LinearLayout.LayoutParams(dp(54), dp(42)));
+        actions.addView(dockSourceButton, new LinearLayout.LayoutParams(dp(64), dp(38)));
         fullscreenEpisodeButton = dockTextButton("选集");
         fullscreenEpisodeButton.setOnClickListener(v -> showFullscreenEpisodePicker());
         fullscreenEpisodeButton.setVisibility(View.GONE);
-        actions.addView(fullscreenEpisodeButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
+        actions.addView(fullscreenEpisodeButton, new LinearLayout.LayoutParams(dp(48), dp(38)));
         MaterialButton fullscreenButton = videoIcon(R.drawable.ic_fullscreen_24);
         fullscreenButton.setOnClickListener(v -> toggleFullscreen());
-        actions.addView(fullscreenButton, new LinearLayout.LayoutParams(dp(48), dp(42)));
+        actions.addView(fullscreenButton, new LinearLayout.LayoutParams(dp(48), dp(38)));
         controlDock.addView(actions);
     }
 
@@ -761,9 +780,32 @@ public class PlayerActivity extends Activity {
         scroll.post(() -> scroll.scrollTo(0, Math.max(0, (episode - 1) * dp(46) - dp(80))));
     }
 
+    private void showFullscreenSourcePanel() {
+        LinearLayout list = createFullscreenPickerPanel("视频源");
+        for (Map.Entry<String, SourceState> entry : sourceStates.entrySet()) {
+            String name = entry.getKey();
+            SourceState state = entry.getValue();
+            boolean ready = SOURCE_READY.equals(state.status) && !state.url.isBlank();
+            boolean current = name.equals(currentSourceName);
+            String label = compactSourceName(name) + (current ? "  ·  当前" : ready ? "  ·  可播放"
+                    : SOURCE_LOADING.equals(state.status) ? "  ·  解析中" : "  ·  失败");
+            Button option = fullscreenPickerOption(label, current);
+            if (ready && !current) {
+                option.setOnClickListener(v -> {
+                    playUrl(name, state.url);
+                    hideFullscreenPickerPanel();
+                    showControlsTemporarily();
+                });
+            } else if (SOURCE_FAILED.equals(state.status) && !state.url.isBlank()) {
+                option.setOnClickListener(v -> playUrl(name, state.url));
+            }
+            option.setAlpha(ready || current ? 1f : 0.55f);
+            list.addView(option);
+        }
+    }
+
     private LinearLayout createFullscreenPickerPanel(String title) {
         hideFullscreenPickerPanel();
-        controlDock.setVisibility(View.GONE);
         fullscreenPickerPanel = new LinearLayout(this);
         fullscreenPickerPanel.setOrientation(LinearLayout.VERTICAL);
         fullscreenPickerPanel.setPadding(dp(10), dp(10), dp(10), dp(10));
@@ -789,12 +831,12 @@ public class PlayerActivity extends Activity {
         fullscreenPickerPanel.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         android.widget.FrameLayout.LayoutParams params = new android.widget.FrameLayout.LayoutParams(
-                dp(176), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END | Gravity.CENTER_VERTICAL);
-        params.setMargins(0, dp(18), dp(12), dp(18));
+                dp(238), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        params.setMargins(0, dp(12), dp(12), dp(94));
         videoFrame.addView(fullscreenPickerPanel, params);
         if (UiMotion.enabled(fullscreenPickerPanel)) {
             fullscreenPickerPanel.setAlpha(0f);
-            fullscreenPickerPanel.setTranslationX(dp(176));
+            fullscreenPickerPanel.setTranslationX(dp(238));
             fullscreenPickerPanel.animate().alpha(1f).translationX(0f)
                     .setDuration(160L).start();
         }
@@ -1067,6 +1109,9 @@ public class PlayerActivity extends Activity {
         fullscreen = !fullscreen;
         appBar.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
         pageScroll.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (fullscreenTitleOverlay != null) {
+            fullscreenTitleOverlay.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
+        }
         controlDock.setVisibility(View.VISIBLE);
         updateFullscreenControls();
         setRequestedOrientation(fullscreen ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
@@ -1081,11 +1126,16 @@ public class PlayerActivity extends Activity {
         videoFrame.setLayoutParams(fullscreen
                 ? new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1)
                 : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(221)));
+        updateControlDockStyle();
     }
 
     private void updateFullscreenControls() {
         if (speedButton != null) speedButton.setVisibility(View.VISIBLE);
-        if (dockSourceButton != null) dockSourceButton.setVisibility(fullscreen ? View.GONE : View.VISIBLE);
+        if (dockSourceButton != null) dockSourceButton.setVisibility(View.VISIBLE);
+        if (dockSourceButton != null) {
+            dockSourceButton.setText(fullscreen ? "视频源"
+                    : currentSourceName.isBlank() ? "自动" : compactSourceName(currentSourceName));
+        }
         if (fullscreenEpisodeButton != null) fullscreenEpisodeButton.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
         if (previousEpisodeButton != null) {
             previousEpisodeButton.setVisibility(fullscreen ? View.VISIBLE : View.GONE);
@@ -1097,6 +1147,22 @@ public class PlayerActivity extends Activity {
             nextEpisodeButton.setEnabled(episode < availableEpisodes);
             nextEpisodeButton.setAlpha(episode < availableEpisodes ? 1f : 0.35f);
         }
+        updateControlDockStyle();
+    }
+
+    private void updateControlDockStyle() {
+        if (controlDock == null) return;
+        controlDock.setPadding(dp(12), 0, dp(8), dp(4));
+        controlDock.setBackground(fullscreen
+                ? rounded(Color.argb(172, 8, 11, 16), 0, Color.TRANSPARENT, 0)
+                : rounded(Color.argb(222, 18, 22, 29), 16,
+                        Color.argb(45, 255, 255, 255), 1));
+        ViewGroup.LayoutParams rawParams = controlDock.getLayoutParams();
+        if (!(rawParams instanceof android.widget.FrameLayout.LayoutParams params)) return;
+        params.height = dp(fullscreen ? 72 : 66);
+        params.setMargins(fullscreen ? 0 : dp(10), 0, fullscreen ? 0 : dp(10),
+                fullscreen ? 0 : dp(10));
+        controlDock.setLayoutParams(params);
     }
 
     private MaterialButton icon(int res) {
@@ -1289,7 +1355,7 @@ public class PlayerActivity extends Activity {
         player.setPlayWhenReady(true);
         if (previewImage != null) previewImage.setVisibility(View.GONE);
         sourceButton.setText(compactSourceName(sourceName));
-        dockSourceButton.setText(compactSourceName(sourceName));
+        dockSourceButton.setText(fullscreen ? "视频源" : compactSourceName(sourceName));
         updateSourceStatus();
         renderSourcePicker();
     }
@@ -1355,6 +1421,10 @@ public class PlayerActivity extends Activity {
     }
 
     private void showSourcePicker() {
+        if (fullscreen) {
+            showFullscreenSourcePanel();
+            return;
+        }
         sourceDialog = new BottomSheetDialog(this);
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
@@ -1792,6 +1862,8 @@ public class PlayerActivity extends Activity {
             button.setAllCaps(false);
             button.setMaxLines(2);
             button.setEllipsize(TextUtils.TruncateAt.END);
+            button.setIncludeFontPadding(false);
+            button.setLineSpacing(dp(2), 1f);
             button.setGravity(Gravity.CENTER);
             button.setMinWidth(0);
             button.setMinimumWidth(0);
@@ -1801,8 +1873,8 @@ public class PlayerActivity extends Activity {
                     9, value == episode ? BLUE : LINE, 1));
             int targetEpisode = value;
             button.setOnClickListener(v -> resolveEpisode(targetEpisode));
-            int width = title.isBlank() ? dp(58) : dp(116);
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(62));
+            int width = title.isBlank() ? dp(58) : dp(124);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(70));
             params.setMargins(0, 0, dp(10), 0);
             episodeRow.addView(button, params);
         }
@@ -1898,6 +1970,10 @@ public class PlayerActivity extends Activity {
         String title = episodeTitle(episode);
         currentEpisodeNameView.setText(title);
         currentEpisodeNameView.setVisibility(title.isBlank() ? View.GONE : View.VISIBLE);
+        if (fullscreenTitleOverlay != null) {
+            fullscreenTitleOverlay.setText("第" + episode + "集"
+                    + (title.isBlank() ? "" : " · " + title));
+        }
     }
 
     private String episodeTitle(int episodeNumber) {

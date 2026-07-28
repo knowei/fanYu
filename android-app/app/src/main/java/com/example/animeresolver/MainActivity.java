@@ -38,7 +38,6 @@ import org.jsoup.select.Elements;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -1164,89 +1163,13 @@ public class MainActivity extends Activity {
     }
 
     private int titleScore(String candidateTitle, String searchedName) {
-        int best = 0;
         ArrayList<String> expectedNames = new ArrayList<>(requestedNames);
         expectedNames.add(searchedName);
-        int candidateSeason = extractSeason(candidateTitle);
-        for (String expected : expectedNames) {
-            String candidate = normalizeName(candidateTitle);
-            String wanted = normalizeName(expected);
-            if (candidate.isBlank() || wanted.isBlank()) continue;
-            int score;
-            if (candidate.equals(wanted)) {
-                score = 100;
-            } else if (candidate.contains(wanted) || wanted.contains(candidate)) {
-                int shorter = Math.min(candidate.length(), wanted.length());
-                int longer = Math.max(candidate.length(), wanted.length());
-                score = 82 + Math.round(12f * shorter / Math.max(1, longer));
-            } else {
-                score = similarity(candidate, wanted);
-            }
-            int expectedSeason = extractSeason(expected);
-            if (expectedSeason > 0 && candidateSeason > 0 && expectedSeason != candidateSeason) {
-                score -= 50;
-            } else if (expectedSeason <= 0 && candidateSeason > 1) {
-                score -= 30;
-            } else if (expectedSeason > 0 && expectedSeason == candidateSeason) {
-                score = Math.min(100, score + 5);
-            }
-            best = Math.max(best, score);
-        }
-        return best;
-    }
-
-    private int similarity(String left, String right) {
-        int[] previous = new int[right.length() + 1];
-        for (int j = 0; j <= right.length(); j++) previous[j] = j;
-        for (int i = 1; i <= left.length(); i++) {
-            int[] current = new int[right.length() + 1];
-            current[0] = i;
-            for (int j = 1; j <= right.length(); j++) {
-                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
-                current[j] = Math.min(Math.min(current[j - 1] + 1, previous[j] + 1),
-                        previous[j - 1] + cost);
-            }
-            previous = current;
-        }
-        int distance = previous[right.length()];
-        return Math.max(0, Math.round(100f * (1f
-                - (float) distance / Math.max(left.length(), right.length()))));
-    }
-
-    private int extractSeason(String value) {
-        if (value == null) return -1;
-        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
-                .toLowerCase(Locale.ROOT);
-        Matcher chinese = Pattern.compile("第\\s*([0-9一二三四五六七八九十]+)\\s*[季部]")
-                .matcher(normalized);
-        if (chinese.find()) return parseSeasonNumber(chinese.group(1));
-        Matcher english = Pattern.compile("(?:season\\s*|s)(\\d+)|(?:^|\\s)(\\d+)(?:st|nd|rd|th)\\s*season")
-                .matcher(normalized);
-        if (english.find()) {
-            String number = english.group(1) == null ? english.group(2) : english.group(1);
-            try { return Integer.parseInt(number); } catch (Exception ignored) { }
-        }
-        return -1;
-    }
-
-    private int parseSeasonNumber(String value) {
-        try { return Integer.parseInt(value); } catch (Exception ignored) { }
-        String digits = "一二三四五六七八九";
-        if ("十".equals(value)) return 10;
-        int ten = value.indexOf('十');
-        if (ten >= 0) {
-            int high = ten == 0 ? 1 : digits.indexOf(value.charAt(0)) + 1;
-            int low = ten == value.length() - 1 ? 0 : digits.indexOf(value.charAt(ten + 1)) + 1;
-            return high * 10 + Math.max(0, low);
-        }
-        return value.length() == 1 ? digits.indexOf(value.charAt(0)) + 1 : -1;
+        return AnimeTitleMatcher.score(candidateTitle, expectedNames);
     }
 
     private String normalizeName(String value) {
-        if (value == null) return "";
-        return Normalizer.normalize(value, Normalizer.Form.NFKC)
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("[^\\p{L}\\p{N}]", "");
+        return AnimeTitleMatcher.normalize(value);
     }
 
     private String safeString(String value) {

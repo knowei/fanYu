@@ -19,8 +19,8 @@ android {
         applicationId = "com.example.animeresolver"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.1.5"
+        versionCode = 17
+        versionName = "1.1.6"
     }
 
     signingConfigs {
