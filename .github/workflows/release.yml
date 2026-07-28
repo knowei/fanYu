@@ -41,7 +41,9 @@ jobs:
 
       - name: Build signed release APK
         working-directory: android-app
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
