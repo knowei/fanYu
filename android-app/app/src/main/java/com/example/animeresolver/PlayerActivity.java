@@ -40,7 +40,9 @@ import org.json.JSONObject;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.ui.PlayerView;
 
 import com.squareup.picasso.Picasso;
@@ -68,7 +70,18 @@ public class PlayerActivity extends Activity {
     private static final Map<Integer, LinkedHashMap<String, SourceState>> SOURCE_STATE_CACHE =
             new HashMap<>();
 
-    private record SourceState(String status, String url, String error, String siteUrl) {}
+    private record SourceState(String status, String url, String error, String siteUrl,
+                               Map<String, String> playbackHeaders) {
+        SourceState(String status, String url, String error, String siteUrl) {
+            this(status, url, error, siteUrl, java.util.Collections.emptyMap());
+        }
+
+        SourceState {
+            playbackHeaders = playbackHeaders == null
+                    ? java.util.Collections.emptyMap()
+                    : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(playbackHeaders));
+        }
+    }
 
     public static synchronized void beginSourceResolution(
             int episode, java.util.Map<String, String> sourceSites) {
@@ -83,6 +96,13 @@ public class PlayerActivity extends Activity {
 
     public static synchronized void cacheSourceState(
             int episode, String name, String status, String url, String error, String siteUrl) {
+        cacheSourceState(episode, name, status, url, error, siteUrl,
+                java.util.Collections.emptyMap());
+    }
+
+    public static synchronized void cacheSourceState(
+            int episode, String name, String status, String url, String error, String siteUrl,
+            Map<String, String> playbackHeaders) {
         if (SOURCE_REMOVED.equals(status)) {
             LinkedHashMap<String, SourceState> states = SOURCE_STATE_CACHE.get(episode);
             if (states != null) states.remove(name);
@@ -94,9 +114,12 @@ public class PlayerActivity extends Activity {
                 .getOrDefault(episode, new LinkedHashMap<>()).get(name);
         String resolvedSiteUrl = siteUrl == null || siteUrl.isBlank()
                 ? previous == null ? "" : previous.siteUrl : siteUrl;
+        Map<String, String> resolvedHeaders = playbackHeaders == null || playbackHeaders.isEmpty()
+                ? previous == null ? java.util.Collections.emptyMap() : previous.playbackHeaders
+                : playbackHeaders;
         SOURCE_STATE_CACHE.computeIfAbsent(episode, ignored -> new LinkedHashMap<>())
                 .put(name, new SourceState(status, url == null ? "" : url,
-                        error == null ? "" : error, resolvedSiteUrl));
+                        error == null ? "" : error, resolvedSiteUrl, resolvedHeaders));
         if (SOURCE_READY.equals(status) && url != null && !url.isBlank()) {
             cacheResolvedSource(episode, name, url);
         }
@@ -247,9 +270,10 @@ public class PlayerActivity extends Activity {
             SourceState state = sourceStates.get(currentSourceName);
             if (state == null || state.url.isBlank()) return;
             sourceStates.put(currentSourceName,
-                    new SourceState(SOURCE_READY, state.url, "", state.siteUrl));
+                    new SourceState(SOURCE_READY, state.url, "", state.siteUrl,
+                            state.playbackHeaders));
             cacheSourceState(episode, currentSourceName,
-                    SOURCE_READY, state.url, "", state.siteUrl);
+                    SOURCE_READY, state.url, "", state.siteUrl, state.playbackHeaders);
             updateSourceStatus();
             renderSourcePicker();
         }
@@ -271,9 +295,10 @@ public class PlayerActivity extends Activity {
             DiagnosticStore.record(PlayerActivity.this, "player", currentSourceName,
                     message, state.siteUrl);
             sourceStates.put(currentSourceName,
-                    new SourceState(SOURCE_FAILED, state.url, message, state.siteUrl));
+                    new SourceState(SOURCE_FAILED, state.url, message, state.siteUrl,
+                            state.playbackHeaders));
             cacheSourceState(episode, currentSourceName,
-                    SOURCE_FAILED, state.url, message, state.siteUrl);
+                    SOURCE_FAILED, state.url, message, state.siteUrl, state.playbackHeaders);
             String fallback = findReadyFallback(currentSourceName);
             if (!fallback.isBlank()) {
                 SourceState candidate = sourceStates.get(fallback);
@@ -302,6 +327,8 @@ public class PlayerActivity extends Activity {
             String status = intent.getStringExtra("source_status");
             String error = intent.getStringExtra("source_error");
             String siteUrl = intent.getStringExtra("source_site_url");
+            Map<String, String> playbackHeaders = parseHeaders(
+                    intent.getStringExtra("playback_headers"));
             if (name == null || name.isBlank()) return;
             if (status == null || status.isBlank()) status = SOURCE_READY;
             if (SOURCE_REMOVED.equals(status)) {
@@ -317,7 +344,7 @@ public class PlayerActivity extends Activity {
             }
             sourceStates.put(name, new SourceState(status,
                     url == null ? "" : url, error == null ? "" : error,
-                    siteUrl == null ? "" : siteUrl));
+                    siteUrl == null ? "" : siteUrl, playbackHeaders));
             if (SOURCE_READY.equals(status) && url != null && !url.isBlank()) {
                 boolean shouldAutoPlay = videoUrl == null || videoUrl.isBlank();
                 sources.put(name, url);
@@ -358,6 +385,8 @@ public class PlayerActivity extends Activity {
         if (incomingTitles != null) episodeTitles = incomingTitles;
         selectedEpisodeRange = (episode - 1) / EPISODES_PER_RANGE;
         initialSourceName = getIntent().getStringExtra("source_name");
+        Map<String, String> initialPlaybackHeaders = parseHeaders(
+                getIntent().getStringExtra("playback_headers"));
         resumePosition = Math.max(0L, getIntent().getLongExtra("resume_position", 0L));
         if (resumePosition == 0L) {
             resumePosition = WatchHistoryStore.resumePosition(this, bangumiId, subjectName, episode);
@@ -371,7 +400,9 @@ public class PlayerActivity extends Activity {
             SourceState previous = sourceStates.get(initialSourceName);
             sourceStates.put(initialSourceName,
                     new SourceState(SOURCE_READY, videoUrl, "",
-                            previous == null ? "" : previous.siteUrl));
+                            previous == null ? "" : previous.siteUrl,
+                            initialPlaybackHeaders.isEmpty() && previous != null
+                                    ? previous.playbackHeaders : initialPlaybackHeaders));
             currentSourceName = initialSourceName;
         }
         if (subjectName == null) subjectName = "正在播放";
@@ -1328,7 +1359,9 @@ public class PlayerActivity extends Activity {
         if (videoUrl == null || videoUrl.isBlank()) return;
         player = createPlayer();
         playerView.setPlayer(player);
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl)));
+        SourceState state = initialSourceName == null ? null : sourceStates.get(initialSourceName);
+        setPlayerMedia(videoUrl, state == null ? java.util.Collections.emptyMap()
+                : state.playbackHeaders);
         if (resumePosition > 0) player.seekTo(resumePosition);
         player.prepare();
         player.setPlayWhenReady(true);
@@ -1341,12 +1374,14 @@ public class PlayerActivity extends Activity {
         currentSourceName = sourceName;
         SourceState previous = sourceStates.get(sourceName);
         sourceStates.put(sourceName, new SourceState(SOURCE_LOADING, url, "",
-                previous == null ? "" : previous.siteUrl));
+                previous == null ? "" : previous.siteUrl,
+                previous == null ? java.util.Collections.emptyMap() : previous.playbackHeaders));
         if (player == null) {
             player = createPlayer();
             playerView.setPlayer(player);
         }
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+        setPlayerMedia(url, previous == null ? java.util.Collections.emptyMap()
+                : previous.playbackHeaders);
         if (resumePosition > 0) {
             player.seekTo(resumePosition);
             resumePosition = 0L;
@@ -1365,6 +1400,32 @@ public class PlayerActivity extends Activity {
         value.addListener(playbackListener);
         value.setPlaybackSpeed(playbackSpeed);
         return value;
+    }
+
+    private void setPlayerMedia(String url, Map<String, String> headers) {
+        DefaultHttpDataSource.Factory dataSource = new DefaultHttpDataSource.Factory()
+                .setUserAgent("FanYu-Android/1.1");
+        if (headers != null && !headers.isEmpty()) {
+            dataSource.setDefaultRequestProperties(headers);
+        }
+        DefaultMediaSourceFactory mediaSources = new DefaultMediaSourceFactory(dataSource);
+        player.setMediaSource(mediaSources.createMediaSource(MediaItem.fromUri(Uri.parse(url))));
+    }
+
+    private static Map<String, String> parseHeaders(String raw) {
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        if (raw == null || raw.isBlank()) return result;
+        try {
+            JSONObject json = new JSONObject(raw);
+            java.util.Iterator<String> keys = json.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                String value = json.optString(key);
+                if (!key.isBlank() && !value.isBlank()) result.put(key, value);
+            }
+        } catch (Exception ignored) {
+        }
+        return result;
     }
 
     private String findReadyFallback(String failedSource) {

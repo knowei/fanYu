@@ -61,7 +61,7 @@ final class LocalSourceStore {
     static synchronized String exportJson(Context context) throws Exception {
         JSONObject root = new JSONObject();
         root.put("format", "fanyu-source-rules");
-        root.put("version", 1);
+        root.put("version", VideoRule.SCHEMA_VERSION);
         root.put("exportedAt", System.currentTimeMillis());
         JSONArray items = new JSONArray();
         for (Config config : read(context)) items.put(config.toJson());
@@ -79,7 +79,7 @@ final class LocalSourceStore {
             JSONObject root = new JSONObject(value);
             String format = root.optString("format");
             if ("fanyu-source-rule".equals(format)) {
-                if (root.optInt("schemaVersion", 0) > 1) {
+                if (root.optInt("schemaVersion", 0) > VideoRule.SCHEMA_VERSION) {
                     throw new IllegalArgumentException("规则版本过新，请先升级番遇");
                 }
                 JSONObject config = root.optJSONObject("config");
@@ -88,7 +88,7 @@ final class LocalSourceStore {
             } else if (!"fanyu-source-rules".equals(format)) {
                 throw new IllegalArgumentException("不是番遇视频源规则文件");
             } else {
-                if (root.optInt("version", 0) > 1) {
+                if (root.optInt("version", 0) > VideoRule.SCHEMA_VERSION) {
                     throw new IllegalArgumentException("规则版本过新，请先升级番遇");
                 }
                 imported = root.optJSONArray("sources");
@@ -122,7 +122,7 @@ final class LocalSourceStore {
             Config normalized = new Config(targetId, candidate.name, candidate.searchUrl,
                     candidate.subjectSelector, candidate.episodeContainer,
                     candidate.episodeSelector, candidate.channelSelector, candidate.tier,
-                    candidate.enabled, candidate.autoDetected);
+                    candidate.enabled, candidate.autoDetected, candidate.videoRule);
             merged.put(targetId, normalized);
             accepted++;
         }
@@ -160,10 +160,18 @@ final class LocalSourceStore {
         final int tier;
         final boolean enabled;
         final boolean autoDetected;
+        final VideoRule videoRule;
 
         Config(String id, String name, String searchUrl, String subjectSelector,
                String episodeContainer, String episodeSelector, String channelSelector,
                int tier, boolean enabled, boolean autoDetected) {
+            this(id, name, searchUrl, subjectSelector, episodeContainer, episodeSelector,
+                    channelSelector, tier, enabled, autoDetected, VideoRule.defaults());
+        }
+
+        Config(String id, String name, String searchUrl, String subjectSelector,
+               String episodeContainer, String episodeSelector, String channelSelector,
+               int tier, boolean enabled, boolean autoDetected, VideoRule videoRule) {
             this.id = id == null || id.isBlank() ? UUID.randomUUID().toString() : id;
             this.name = name == null ? "" : name.trim();
             this.searchUrl = searchUrl == null ? "" : searchUrl.trim();
@@ -174,6 +182,7 @@ final class LocalSourceStore {
             this.tier = tier;
             this.enabled = enabled;
             this.autoDetected = autoDetected;
+            this.videoRule = videoRule == null ? VideoRule.defaults() : videoRule;
         }
 
         JSONObject toJson() {
@@ -189,6 +198,7 @@ final class LocalSourceStore {
                 item.put("tier", tier);
                 item.put("enabled", enabled);
                 item.put("autoDetected", autoDetected);
+                item.put("video", videoRule.toJson());
             } catch (Exception ignored) {
             }
             return item;
@@ -199,7 +209,8 @@ final class LocalSourceStore {
                     item.optString("searchUrl"), item.optString("subjectSelector"),
                     item.optString("episodeContainer"), item.optString("episodeSelector", "a"),
                     item.optString("channelSelector"), item.optInt("tier", 20),
-                    item.optBoolean("enabled", true), item.optBoolean("autoDetected", false));
+                    item.optBoolean("enabled", true), item.optBoolean("autoDetected", false),
+                    VideoRule.fromJson(item.optJSONObject("video")));
         }
 
         boolean isValid() {

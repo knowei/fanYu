@@ -41,8 +41,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -67,9 +69,6 @@ public class MainActivity extends Activity {
     private static final Pattern MEDIA_URL_PATTERN =
             Pattern.compile("https?://[^\\s\"']+\\.(?:m3u8|mp4|flv|mkv)(?:\\?[^\\s\"']*)?",
                     Pattern.CASE_INSENSITIVE);
-    private static final Pattern PLAYER_DATA_PATTERN =
-            Pattern.compile("player_aaaa\\s*=\\s*(\\{.*?\\})\\s*;?\\s*</script>",
-                    Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final String BROWSER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
                     "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
@@ -109,6 +108,7 @@ public class MainActivity extends Activity {
     private String detailUrl;
     private String episodeUrl;
     private String resolvedSource = "omofun111";
+    private Map<String, String> resolvedPlaybackHeaders = new LinkedHashMap<>();
     private volatile boolean collectingSources;
     private String subjectCover = "";
     private int probeGeneration;
@@ -430,13 +430,15 @@ public class MainActivity extends Activity {
                                             }
                                             broadcastSourceState(result.source,
                                                     PlayerActivity.SOURCE_READY,
-                                                    result.videoUrl, "", result.episodeUrl);
+                                                    result.videoUrl, "", result.episodeUrl,
+                                                    result.playbackHeaders);
                                             if (delivered.compareAndSet(false, true)) {
                                                 runOnUiThread(() -> {
                                                     if (generation != probeGeneration) return;
                                                     resolvedSource = result.source;
                                                     detailUrl = result.detailUrl;
                                                     episodeUrl = result.episodeUrl;
+                                                    resolvedPlaybackHeaders = result.playbackHeaders;
                                                     stage = Stage.PLAY;
                                                     deliverVideo(result.videoUrl);
                                                 });
@@ -601,7 +603,8 @@ public class MainActivity extends Activity {
                     Math.max(1, search.optInt("searchUseSubjectNamesCount", 3)),
                     search.optBoolean("searchUseOnlyFirstWord", false),
                     search.optBoolean("searchRemoveSpecial", false),
-                    arguments.optInt("tier", 99)
+                    arguments.optInt("tier", 99),
+                    VideoRule.fromCss1(search.optJSONObject("matchVideo"))
             ));
         }
         result.sort(Comparator.comparingInt(source -> source.tier));
@@ -617,7 +620,8 @@ public class MainActivity extends Activity {
             sources.add(new SourceConfig(local.name, local.searchUrl, "a",
                     local.subjectSelector, "", "index-grouped", local.channelSelector,
                     "", local.episodeContainer, local.episodeSelector, "",
-                    "第\\s*(?<ep>.+)\\s*[话集]", "", 3, false, false, local.tier));
+                    "第\\s*(?<ep>.+)\\s*[话集]", "", 3, false, false, local.tier,
+                    local.videoRule));
         }
         sources.sort(Comparator.comparingInt(source -> source.tier));
     }
@@ -698,19 +702,27 @@ public class MainActivity extends Activity {
         for (EpisodeCandidate candidate : candidates) {
             completion.submit(() -> {
                 try {
-                    HttpPage playPage = getPage(candidate.episodeUrl);
+                    Map<String, String> requestHeaders = VideoExtractorEngine.requestHeaders(
+                            source.videoRule, candidate.episodeUrl);
+                    HttpPage playPage = getPage(candidate.episodeUrl, requestHeaders);
                     if (isChallengePage(playPage)) throw new IOException("需要验证");
-                    String mediaUrl = extractPlayerMediaUrl(playPage.html);
-                    if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
-                        Matcher mediaMatcher = MEDIA_URL_PATTERN.matcher(playPage.html);
-                        mediaUrl = mediaMatcher.find() ? mediaMatcher.group() : null;
-                    }
+                    VideoExtractorEngine.Result extracted = VideoExtractorEngine.extract(
+                            candidate.episodeUrl,
+                            new VideoExtractorEngine.Page(playPage.url, playPage.html),
+                            source.videoRule,
+                            (url, headers) -> {
+                                HttpPage loaded = getPage(url, headers);
+                                if (isChallengePage(loaded)) throw new IOException("需要验证");
+                                return new VideoExtractorEngine.Page(loaded.url, loaded.html);
+                            });
+                    String mediaUrl = extracted == null ? null : extracted.url();
                     if (mediaUrl == null || !isMediaUrl(mediaUrl)) {
                         throw new IOException("未发现直连媒体");
                     }
                     return new ChannelAttempt(candidate,
                             new ResolveResult(candidate.sourceKey, resolvedDetailUrl,
-                                    candidate.episodeUrl, mediaUrl), "");
+                                    candidate.episodeUrl, mediaUrl,
+                                    extracted.playbackHeaders()), "");
                 } catch (Exception exception) {
                     String message = exception.getMessage();
                     return new ChannelAttempt(candidate, null,
@@ -815,10 +827,19 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                String mediaUrl = extractPlayerMediaUrl(playPage.html);
-                if (mediaUrl != null && isMediaUrl(mediaUrl)) {
+                VideoRule fallbackRule = VideoRule.defaults();
+                VideoExtractorEngine.Result extracted = VideoExtractorEngine.extract(episodeUrl,
+                        new VideoExtractorEngine.Page(playPage.url, playPage.html), fallbackRule,
+                        (url, headers) -> {
+                            HttpPage nested = getPage(url, headers);
+                            return new VideoExtractorEngine.Page(nested.url, nested.html);
+                        });
+                if (extracted != null && isMediaUrl(extracted.url())) {
                     runOnUiThread(() -> {
-                        if (generation == probeGeneration) deliverVideo(mediaUrl);
+                        if (generation == probeGeneration) {
+                            resolvedPlaybackHeaders = extracted.playbackHeaders();
+                            deliverVideo(extracted.url());
+                        }
                     });
                     return;
                 }
@@ -836,11 +857,23 @@ public class MainActivity extends Activity {
     }
 
     private HttpPage getPage(String url) throws IOException {
+        return getPage(url, java.util.Collections.emptyMap());
+    }
+
+    private HttpPage getPage(String url, Map<String, String> configuredHeaders) throws IOException {
         Request.Builder builder = new Request.Builder()
                 .url(url)
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        if (configuredHeaders != null) {
+            for (Map.Entry<String, String> header : configuredHeaders.entrySet()) {
+                if (!header.getKey().isBlank() && header.getValue() != null
+                        && !header.getValue().isBlank()) {
+                    builder.header(header.getKey(), header.getValue());
+                }
+            }
+        }
         String cookies = CookieManager.getInstance().getCookie(url);
         if (cookies != null && !cookies.isBlank()) {
             builder.header("Cookie", cookies);
@@ -1035,26 +1068,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String extractPlayerMediaUrl(String html) {
-        Matcher matcher = PLAYER_DATA_PATTERN.matcher(html);
-        if (!matcher.find()) return null;
-        try {
-            JSONObject player = new JSONObject(matcher.group(1));
-            String url = player.optString("url");
-            int encrypt = player.optInt("encrypt", 0);
-            if (encrypt == 1) {
-                url = URLDecoder.decode(url, StandardCharsets.UTF_8);
-            } else if (encrypt == 2) {
-                url = new String(android.util.Base64.decode(url, android.util.Base64.DEFAULT),
-                        StandardCharsets.UTF_8);
-                url = URLDecoder.decode(url, StandardCharsets.UTF_8);
-            }
-            return url;
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
     private boolean isChallengePage(HttpPage page) {
         String lower = page.html.toLowerCase(Locale.ROOT);
         boolean cloudflareChallenge = lower.contains("cf-chl-")
@@ -1205,7 +1218,8 @@ public class MainActivity extends Activity {
             int searchNameCount,
             boolean searchUseOnlyFirstWord,
             boolean searchRemoveSpecial,
-            int tier
+            int tier,
+            VideoRule videoRule
     ) {
     }
 
@@ -1225,7 +1239,8 @@ public class MainActivity extends Activity {
             String source,
             String detailUrl,
             String episodeUrl,
-            String videoUrl
+            String videoUrl,
+            Map<String, String> playbackHeaders
     ) {
     }
 
@@ -1474,17 +1489,25 @@ public class MainActivity extends Activity {
         playerIntent.putStringArrayListExtra("episode_titles",
                 getIntent().getStringArrayListExtra("episode_titles"));
         playerIntent.putExtra("source_name", resolvedSource);
+        playerIntent.putExtra("playback_headers", new JSONObject(resolvedPlaybackHeaders).toString());
         startActivity(playerIntent);
         finish();
     }
 
     private void broadcastSourceState(
             String sourceName, String status, String videoUrl, String error, String siteUrl) {
+        broadcastSourceState(sourceName, status, videoUrl, error, siteUrl,
+                java.util.Collections.emptyMap());
+    }
+
+    private void broadcastSourceState(
+            String sourceName, String status, String videoUrl, String error, String siteUrl,
+            Map<String, String> playbackHeaders) {
         if (PlayerActivity.SOURCE_FAILED.equals(status)) {
             DiagnosticStore.record(this, "source/" + stage.name(), sourceName, error, siteUrl);
         }
         PlayerActivity.cacheSourceState(
-                requestedEpisode, sourceName, status, videoUrl, error, siteUrl);
+                requestedEpisode, sourceName, status, videoUrl, error, siteUrl, playbackHeaders);
         Intent update = new Intent(PlayerActivity.ACTION_SOURCE_RESULT);
         update.setPackage(getPackageName());
         update.putExtra("episode", requestedEpisode);
@@ -1493,6 +1516,7 @@ public class MainActivity extends Activity {
         update.putExtra("video_url", videoUrl);
         update.putExtra("source_error", error);
         update.putExtra("source_site_url", siteUrl);
+        update.putExtra("playback_headers", new JSONObject(playbackHeaders).toString());
         sendBroadcast(update);
     }
 

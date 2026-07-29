@@ -57,7 +57,7 @@ final class RuleRepositoryStore {
     static String encodeRule(LocalSourceStore.Config config) throws Exception {
         JSONObject root = new JSONObject();
         root.put("format", "fanyu-source-rule");
-        root.put("schemaVersion", 1);
+        root.put("schemaVersion", VideoRule.SCHEMA_VERSION);
         root.put("config", config.toJson());
         String encoded = Base64.encodeToString(
                 root.toString().getBytes(StandardCharsets.UTF_8),
@@ -77,7 +77,7 @@ final class RuleRepositoryStore {
         if (!"fanyu-source-rule".equals(root.optString("format"))) {
             throw new IllegalArgumentException("规则链接格式不正确");
         }
-        if (root.optInt("schemaVersion", 0) > 1) {
+        if (root.optInt("schemaVersion", 0) > VideoRule.SCHEMA_VERSION) {
             throw new IllegalArgumentException("规则需要更高版本的番遇");
         }
         JSONObject config = root.optJSONObject("config");

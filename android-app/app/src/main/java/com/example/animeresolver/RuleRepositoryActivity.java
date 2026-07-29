@@ -384,7 +384,7 @@ public class RuleRepositoryActivity extends Activity {
             LocalSourceStore.save(this, new LocalSourceStore.Config(config.id, config.name,
                     config.searchUrl, config.subjectSelector, config.episodeContainer,
                     config.episodeSelector, config.channelSelector, config.tier,
-                    !config.enabled, config.autoDetected));
+                    !config.enabled, config.autoDetected, config.videoRule));
             render();
         });
         actions.addView(toggle, new LinearLayout.LayoutParams(0, dp(38), 1));
@@ -420,7 +420,9 @@ public class RuleRepositoryActivity extends Activity {
                 }
                 JSONObject payload = new JSONObject(raw);
                 if (!rule.id.equals(payload.optString("id"))) throw new IOException("规则身份不匹配");
-                if (payload.optInt("schemaVersion", 0) > 1) throw new IOException("规则需要更高版本的番遇");
+                if (payload.optInt("schemaVersion", 0) > VideoRule.SCHEMA_VERSION) {
+                    throw new IOException("规则需要更高版本的番遇");
+                }
                 JSONObject configJson = payload.getJSONObject("config");
                 LocalSourceStore.Config config = LocalSourceStore.Config.fromJson(configJson);
                 if (!config.isValid()) throw new IOException("规则内容不完整");

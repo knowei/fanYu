@@ -23,10 +23,12 @@ import android.widget.Toast;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -51,6 +53,7 @@ public class SourceEditorActivity extends Activity {
     private EditText episodeContainerInput;
     private EditText episodeSelectorInput;
     private EditText channelSelectorInput;
+    private EditText videoRuleInput;
     private TextView probeStatus;
     private Button probeButton;
     private Button advancedToggle;
@@ -86,20 +89,20 @@ public class SourceEditorActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(0, dp(8), 0, dp(20));
         UiMotion.animateLayout(form);
-        TextView intro = text("输入搜索页面或网站首页，自动探测会尝试识别搜索结果和选集结构。探测结果仍可手动修改。", 13, MUTED, false);
+        TextView intro = text("输入搜索页面或网站首页，完整探测会验证搜索、详情、选集和真实播放地址，并生成 v2 规则。", 13, MUTED, false);
         intro.setLineSpacing(dp(3), 1f);
         form.addView(intro, margins(-1, -2, 0, 0, 14));
         nameInput = field(form, "名称", "例如：橘子动漫", false);
         addressInput = field(form, "网站或搜索地址", "https://example.com 或包含 {keyword} 的地址", false);
 
-        probeButton = actionButton("自动探测并填写", true);
+        probeButton = actionButton("完整探测并测试播放", true);
         probeButton.setOnClickListener(v -> probe());
         form.addView(probeButton, margins(-1, dp(46), 0, 2, 8));
-        probeStatus = text("建议使用“史莱姆”作为测试关键词，探测过程不会请求视频。", 12, MUTED, false);
+        probeStatus = text("将使用“史莱姆”测试第一个搜索结果及其第一集，请仅探测你有权访问的网站。", 12, MUTED, false);
         probeStatus.setLineSpacing(dp(2), 1f);
         form.addView(probeStatus, margins(-1, -2, 0, 0, 18));
 
-        TextView modeHint = text("普通模式只需要填写名称和网站地址，再运行自动探测。", 13,
+        TextView modeHint = text("普通模式只需要填写名称和网站地址，再运行完整探测。", 13,
                 Color.rgb(55, 82, 130), true);
         modeHint.setPadding(dp(12), dp(9), dp(12), dp(9));
         modeHint.setBackground(round(Color.rgb(234, 242, 255), 12,
@@ -120,6 +123,8 @@ public class SourceEditorActivity extends Activity {
         episodeSelectorInput = field(advancedFields, "单集选择器", "a", true);
         channelSelectorInput = field(advancedFields, "线路名称选择器（可留空）",
                 ".module-tab-item > span", true);
+        videoRuleInput = jsonField(advancedFields, "视频提取规则（v2 JSON）",
+                "自动探测后会生成，也可以手动修改");
         form.addView(advancedFields);
         advancedToggle.setOnClickListener(v -> setAdvancedVisible(
                 advancedFields.getVisibility() != View.VISIBLE));
@@ -156,6 +161,22 @@ public class SourceEditorActivity extends Activity {
         return input;
     }
 
+    private EditText jsonField(LinearLayout form, String label, String hint) {
+        form.addView(text(label, 14, INK, true), margins(-1, dp(28), 0, 6, 4));
+        EditText input = new EditText(this);
+        input.setSingleLine(false);
+        input.setMinLines(6);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setTextSize(12);
+        input.setTextColor(INK);
+        input.setHintTextColor(Color.rgb(150, 154, 163));
+        input.setHint(hint);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setBackground(round(Color.WHITE, 12, LINE, 1));
+        form.addView(input, margins(-1, -2, 0, 0, 10));
+        return input;
+    }
+
     private void fill(LocalSourceStore.Config config) {
         if (config == null) return;
         nameInput.setText(config.name);
@@ -164,6 +185,7 @@ public class SourceEditorActivity extends Activity {
         episodeContainerInput.setText(config.episodeContainer);
         episodeSelectorInput.setText(config.episodeSelector);
         channelSelectorInput.setText(config.channelSelector);
+        videoRuleInput.setText(config.videoRule.toJson().toString());
         enabledSwitch.setChecked(config.enabled);
         autoDetected = config.autoDetected;
         probeStatus.setText(config.autoDetected ? "这个配置最初由自动探测生成，可继续修改。" : "正在编辑手动配置。"
@@ -188,7 +210,7 @@ public class SourceEditorActivity extends Activity {
             } catch (Exception error) {
                 runOnUiThread(() -> {
                     probeButton.setEnabled(true);
-                    probeButton.setText("重新自动探测");
+                    probeButton.setText("重新完整探测");
                     String message = error.getMessage() == null ? "无法识别这个网站" : error.getMessage();
                     probeStatus.setText("探测失败：" + message + "。可以手动填写选择器后保存。"
                     );
@@ -232,8 +254,29 @@ public class SourceEditorActivity extends Activity {
                 ".module-tab-item>span", ".anthology-tab>.swiper-wrapper a",
                 ".play_source_tab a", ".nav-tabs li"
         }, 1);
+        Element episodeRoot = detailDocument.selectFirst(episodeContainer);
+        Element episodeLink = episodeRoot == null ? null : episodeRoot.selectFirst("a[href]");
+        if (episodeLink == null || episodeLink.absUrl("href").isBlank()) {
+            throw new IOException("已识别选集列表，但没有可测试的剧集链接");
+        }
+        String episodeUrl = episodeLink.absUrl("href");
+        VideoRule videoRule = VideoRule.defaults();
+        Map<String, String> requestHeaders = VideoExtractorEngine.requestHeaders(videoRule, episodeUrl);
+        HttpPage play = getPage(episodeUrl, requestHeaders);
+        VideoExtractorEngine.Result media = VideoExtractorEngine.extract(episodeUrl,
+                new VideoExtractorEngine.Page(play.url, play.html),
+                videoRule,
+                (url, headers) -> {
+                    HttpPage nested = getPage(url, headers);
+                    return new VideoExtractorEngine.Page(nested.url, nested.html);
+                });
+        if (media == null || media.url().isBlank()) {
+            throw new IOException("选集已找到，但默认提取器没有发现播放地址");
+        }
+        verifyMedia(media.url(), media.playbackHeaders());
         return new ProbeResult(template, subjectSelector, episodeContainer, "a",
-                channelSelector == null ? "" : channelSelector, hostName(template));
+                channelSelector == null ? "" : channelSelector, hostName(template),
+                videoRule, media.url());
     }
 
     private String searchTemplateFromAddress(String address) {
@@ -284,12 +327,13 @@ public class SourceEditorActivity extends Activity {
         episodeContainerInput.setText(result.episodeContainer);
         episodeSelectorInput.setText(result.episodeSelector);
         channelSelectorInput.setText(result.channelSelector);
+        videoRuleInput.setText(result.videoRule.toJson().toString());
         if (nameInput.getText().toString().trim().isBlank()) nameInput.setText(result.suggestedName);
         autoDetected = true;
         probeButton.setEnabled(true);
-        probeButton.setText("重新自动探测");
-        probeStatus.setText("探测成功：已识别搜索结果和选集列表。保存后会进入并发解析队列。"
-        );
+        probeButton.setText("重新完整探测");
+        probeStatus.setText("完整探测成功：搜索、详情、选集和播放地址均已验证。\n"
+                + result.videoUrl);
     }
 
     private void setAdvancedVisible(boolean visible) {
@@ -310,17 +354,37 @@ public class SourceEditorActivity extends Activity {
             Toast.makeText(this, "请补全名称、搜索模板、搜索结果和选集选择器", Toast.LENGTH_LONG).show();
             return;
         }
-        LocalSourceStore.save(this, new LocalSourceStore.Config(sourceId, name, searchUrl,
-                subject, episodes, episodeSelectorInput.getText().toString().trim(),
-                channelSelectorInput.getText().toString().trim(), 20,
-                enabledSwitch.isChecked(), autoDetected));
+        try {
+            String videoJson = videoRuleInput.getText().toString().trim();
+            VideoRule videoRule = videoJson.isBlank()
+                    ? VideoRule.defaults() : VideoRule.fromJson(new JSONObject(videoJson));
+            LocalSourceStore.save(this, new LocalSourceStore.Config(sourceId, name, searchUrl,
+                    subject, episodes, episodeSelectorInput.getText().toString().trim(),
+                    channelSelectorInput.getText().toString().trim(), 20,
+                    enabledSwitch.isChecked(), autoDetected, videoRule));
+        } catch (Exception error) {
+            Toast.makeText(this, "视频提取规则 JSON 无效：" + error.getMessage(), Toast.LENGTH_LONG).show();
+            setAdvancedVisible(true);
+            return;
+        }
         setResult(RESULT_OK);
         finish();
     }
 
     private HttpPage getPage(String url) throws IOException {
+        return getPage(url, Map.of());
+    }
+
+    private HttpPage getPage(String url, Map<String, String> configuredHeaders) throws IOException {
         Request.Builder builder = new Request.Builder().url(url).header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        if (configuredHeaders != null) {
+            for (Map.Entry<String, String> header : configuredHeaders.entrySet()) {
+                if (!header.getKey().isBlank() && header.getValue() != null && !header.getValue().isBlank()) {
+                    builder.header(header.getKey(), header.getValue());
+                }
+            }
+        }
         String cookies = CookieManager.getInstance().getCookie(url);
         if (cookies != null && !cookies.isBlank()) builder.header("Cookie", cookies);
         try (Response response = client.newCall(builder.build()).execute()) {
@@ -330,6 +394,25 @@ public class SourceEditorActivity extends Activity {
             String html = response.body().string();
             if (!response.isSuccessful() && !isChallenge(html)) throw new IOException("HTTP " + response.code());
             return new HttpPage(response.request().url().toString(), html);
+        }
+    }
+
+    private void verifyMedia(String url, Map<String, String> headers) throws IOException {
+        Request.Builder builder = new Request.Builder().url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Range", "bytes=0-2047");
+        if (headers != null) {
+            for (Map.Entry<String, String> header : headers.entrySet()) {
+                if (!header.getKey().isBlank() && header.getValue() != null && !header.getValue().isBlank()) {
+                    builder.header(header.getKey(), header.getValue());
+                }
+            }
+        }
+        try (Response response = client.newCall(builder.build()).execute()) {
+            if (!response.isSuccessful() && response.code() != 206) {
+                throw new IOException("播放地址测试失败：HTTP " + response.code());
+            }
+            if (response.body() == null) throw new IOException("播放地址测试失败：响应为空");
         }
     }
 
@@ -413,5 +496,6 @@ public class SourceEditorActivity extends Activity {
     private record HttpPage(String url, String html) {}
     private record ProbeResult(String searchUrl, String subjectSelector,
                                String episodeContainer, String episodeSelector,
-                               String channelSelector, String suggestedName) {}
+                               String channelSelector, String suggestedName,
+                               VideoRule videoRule, String videoUrl) {}
 }
