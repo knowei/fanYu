@@ -200,6 +200,7 @@ public class RuleRepositoryActivity extends Activity {
 
     private void renderRepository() {
         subtitle.setText(catalogMessage);
+        content.addView(cssPackageRepositoryCard(), margins(-1, -2, 0, 0, 0, 12));
         if (!catalogLoaded) {
             content.addView(infoCard("正在加载", "正在获取最新规则和版本信息。"));
             return;
@@ -250,19 +251,117 @@ public class RuleRepositoryActivity extends Activity {
 
     private void renderInstalled() {
         List<LocalSourceStore.Config> installed = LocalSourceStore.read(this);
-        subtitle.setText("已安装 " + installed.size() + " 条 · 长按规则卡片可卸载");
+        boolean cssInstalled = SubscriptionRuleStore.isInstalled(this);
+        int installedCount = installed.size() + (cssInstalled ? 1 : 0);
+        subtitle.setText("已安装 " + installedCount + " 项 · 规则包和单条规则均可卸载");
 
         Button health = actionButton("检测所有已启用规则", false);
         health.setOnClickListener(v -> startActivity(new Intent(this, SourceManagementActivity.class)));
         content.addView(health, margins(-1, dp(44), 0, 0, 0, 12));
 
-        if (installed.isEmpty()) {
+        if (cssInstalled) {
+            content.addView(cssPackageInstalledCard(), margins(-1, -2, 0, 0, 0, 10));
+        }
+
+        if (installed.isEmpty() && !cssInstalled) {
             content.addView(infoCard("还没有安装规则", "切换到规则仓库，选择需要的视频源即可。"));
             return;
         }
         for (LocalSourceStore.Config config : installed) {
             content.addView(installedCard(config), margins(-1, -2, 0, 0, 0, 10));
         }
+    }
+
+    private View cssPackageRepositoryCard() {
+        boolean installed = SubscriptionRuleStore.isInstalled(this);
+        SubscriptionRuleStore.InstallInfo info = SubscriptionRuleStore.info(this);
+        LinearLayout card = card();
+        LinearLayout first = new LinearLayout(this);
+        first.setGravity(Gravity.CENTER_VERTICAL);
+        first.addView(text("CSS1 视频源合集", 17, INK, true),
+                new LinearLayout.LayoutParams(0, dp(30), 1));
+        first.addView(badge(installed ? "已下载" : "可选规则包",
+                installed ? Color.rgb(232, 247, 238) : Color.rgb(232, 240, 255),
+                installed ? Color.rgb(18, 125, 74) : BLUE),
+                new LinearLayout.LayoutParams(-2, dp(25)));
+        card.addView(first);
+        String detail = installed
+                ? "本地包含 " + info.sourceCount() + " 个兼容源 · " + formatBytes(info.bytes())
+                : "一次下载多个 CSS 视频源；播放解析只读取下载后的本地副本。";
+        TextView description = text(detail, 13, MUTED, false);
+        description.setLineSpacing(dp(2), 1f);
+        card.addView(description, margins(-1, -2, 0, 5, 0, 10));
+        LinearLayout tags = new LinearLayout(this);
+        tags.addView(tag("本地使用"), margins(-2, dp(24), 0, 0, 6, 0));
+        tags.addView(tag("多视频源"), margins(-2, dp(24), 0, 0, 6, 0));
+        tags.addView(tag("可卸载"), margins(-2, dp(24), 0, 0, 6, 0));
+        card.addView(tags, margins(-1, dp(26), 0, 0, 0, 12));
+        Button download = actionButton(installed ? "重新下载" : "下载规则包", true);
+        download.setOnClickListener(v -> downloadCssPackage(download));
+        card.addView(download, new LinearLayout.LayoutParams(-1, dp(42)));
+        return card;
+    }
+
+    private View cssPackageInstalledCard() {
+        SubscriptionRuleStore.InstallInfo info = SubscriptionRuleStore.info(this);
+        LinearLayout card = card();
+        LinearLayout first = new LinearLayout(this);
+        first.setGravity(Gravity.CENTER_VERTICAL);
+        first.addView(text("CSS1 视频源合集", 17, INK, true),
+                new LinearLayout.LayoutParams(0, dp(30), 1));
+        first.addView(badge("已安装", Color.rgb(232, 247, 238), Color.rgb(18, 125, 74)),
+                new LinearLayout.LayoutParams(-2, dp(25)));
+        card.addView(first);
+        card.addView(text(info.sourceCount() + " 个兼容源 · " + formatBytes(info.bytes())
+                        + " · 仅从本地读取", 13, MUTED, false),
+                margins(-1, dp(26), 0, 2, 0, 10));
+        LinearLayout actions = new LinearLayout(this);
+        Button refresh = actionButton("重新下载", false);
+        refresh.setOnClickListener(v -> downloadCssPackage(refresh));
+        actions.addView(refresh, new LinearLayout.LayoutParams(0, dp(38), 1));
+        Button uninstall = actionButton("卸载", false);
+        uninstall.setOnClickListener(v -> confirmUninstallCssPackage());
+        LinearLayout.LayoutParams uninstallParams = new LinearLayout.LayoutParams(0, dp(38), 1);
+        uninstallParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(uninstall, uninstallParams);
+        card.addView(actions);
+        return card;
+    }
+
+    private void downloadCssPackage(Button button) {
+        button.setEnabled(false);
+        button.setText("正在下载…");
+        executor.execute(() -> {
+            try {
+                SubscriptionRuleStore.InstallInfo info = SubscriptionRuleStore.install(this,
+                        getText(SubscriptionRuleStore.DOWNLOAD_URL));
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "规则包已下载，共 " + info.sourceCount() + " 个兼容源",
+                            Toast.LENGTH_SHORT).show();
+                    render();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "下载失败：" + shortError(error), Toast.LENGTH_LONG).show();
+                    render();
+                });
+            }
+        });
+    }
+
+    private void confirmUninstallCssPackage() {
+        new AlertDialog.Builder(this)
+                .setTitle("卸载 CSS1 规则包？")
+                .setMessage("卸载后，其中包含的视频源将立即停止参与搜索和解析。需要时可再次下载。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("卸载", (dialog, which) -> {
+                    if (SubscriptionRuleStore.uninstall(this)) {
+                        Toast.makeText(this, "CSS1 规则包已卸载", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(this, "卸载失败，请稍后重试", Toast.LENGTH_LONG).show();
+                    }
+                    render();
+                }).show();
     }
 
     private View installedCard(LocalSourceStore.Config config) {
@@ -486,6 +585,12 @@ public class RuleRepositoryActivity extends Activity {
         String message = error.getMessage();
         if (message == null || message.isBlank()) return "未知错误";
         return message.length() > 48 ? message.substring(0, 48) + "…" : message;
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(Locale.CHINA, "%.1f KB", bytes / 1024f);
+        return String.format(Locale.CHINA, "%.1f MB", bytes / (1024f * 1024f));
     }
 
     private LinearLayout card() {

@@ -61,8 +61,6 @@ import okhttp3.Response;
 
 public class MainActivity extends Activity {
     private static final String BASE_URL = "https://enlienli.link";
-    private static final String SUBSCRIPTION_URL =
-            "https://sub.creamycake.org/v1/css1.json";
     private static final String SEARCH_RESULT_SELECTOR =
             ".module-card-item>.module-card-item-info>.module-card-item-title>a";
     private static final String EPISODE_LIST_SELECTOR = ".module-play-list-content";
@@ -348,21 +346,29 @@ public class MainActivity extends Activity {
         hideVerification();
         setStatus("正在搜索番剧…");
 
-        String searchUrl = BASE_URL + "/vod/search.html?wd=" +
-                Uri.encode(requestedName);
-        resolveFromSubscription(searchUrl, probeGeneration);
+        resolveFromInstalledRules(probeGeneration);
     }
 
-    private void resolveFromSubscription(String fallbackSearchUrl, int generation) {
+    private void resolveFromInstalledRules(int generation) {
         networkExecutor.execute(() -> {
             try {
-                HttpPage subscription = getPage(SUBSCRIPTION_URL);
-                List<SourceConfig> sources = parseSourceConfigs(subscription.html);
+                List<SourceConfig> sources = new ArrayList<>();
+                Exception packageError = null;
+                if (SubscriptionRuleStore.isInstalled(this)) {
+                    try {
+                        sources.addAll(parseSourceConfigs(SubscriptionRuleStore.read(this)));
+                    } catch (Exception error) {
+                        packageError = error;
+                    }
+                }
                 addLocalSources(sources);
                 if (!onlySource.isBlank()) {
                     sources.removeIf(source -> !source.name.equals(onlySource));
                 }
-                if (sources.isEmpty()) throw new IOException("订阅中没有兼容的数据源");
+                if (sources.isEmpty()) {
+                    if (packageError != null) throw new IOException("本地 CSS1 规则包损坏，请重新下载");
+                    throw new IOException("没有安装可用的视频源规则");
+                }
                 sources.sort((left, right) -> SourceMetricsStore.compare(this,
                         left.name, left.tier, right.name, right.tier));
 
@@ -509,8 +515,8 @@ public class MainActivity extends Activity {
                         finish();
                         return;
                     }
-                    setStatus("多源直连未命中，正在使用兼容模式…");
-                    resolveWithHttp(fallbackSearchUrl, generation);
+                    String message = exception.getMessage();
+                    fail(message == null || message.isBlank() ? "没有可用的视频源" : message);
                 });
             }
         });

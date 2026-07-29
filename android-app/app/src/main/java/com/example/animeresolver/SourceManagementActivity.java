@@ -45,7 +45,6 @@ import okhttp3.Response;
 
 /** A lightweight, search-only health check for the configured video sources. */
 public class SourceManagementActivity extends Activity {
-    private static final String SUBSCRIPTION_URL = "https://sub.creamycake.org/v1/css1.json";
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
     private static final int BLUE = Color.rgb(47, 111, 237);
@@ -138,25 +137,30 @@ public class SourceManagementActivity extends Activity {
     private void loadSources() {
         executor.execute(() -> {
             List<SourceSite> parsed = new ArrayList<>();
-            String remoteError = "";
-            try {
-                String json = getPage(SUBSCRIPTION_URL).html;
-                parsed.addAll(parseSources(json));
-            } catch (Exception error) {
-                remoteError = "订阅源暂时读取失败，仅显示本地源";
+            String packageMessage = "";
+            if (SubscriptionRuleStore.isInstalled(this)) {
+                try {
+                    parsed.addAll(parseSources(SubscriptionRuleStore.read(this)));
+                } catch (Exception error) {
+                    packageMessage = "本地 CSS1 规则包损坏，请重新下载";
+                }
+            } else {
+                packageMessage = "CSS1 规则包未安装，仅显示单独安装的规则";
             }
             for (LocalSourceStore.Config local : LocalSourceStore.read(this)) {
-                parsed.add(SourceSite.fromLocal(local));
+                boolean duplicate = parsed.stream().anyMatch(source ->
+                        source.searchUrl.equalsIgnoreCase(local.searchUrl));
+                if (!duplicate) parsed.add(SourceSite.fromLocal(local));
             }
             parsed.sort((left, right) -> SourceMetricsStore.compare(this,
                     left.name, left.tier, right.name, right.tier));
-            String finalRemoteError = remoteError;
+            String finalPackageMessage = packageMessage;
             runOnUiThread(() -> {
                 sources.clear();
                 sources.addAll(parsed);
                 renderSources();
                 updateSummary();
-                if (!finalRemoteError.isBlank()) summary.setText(finalRemoteError + " · 本地 "
+                if (!finalPackageMessage.isBlank()) summary.setText(finalPackageMessage + " · 本地 "
                         + LocalSourceStore.read(this).size() + " 个");
             });
         });
